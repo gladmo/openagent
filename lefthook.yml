@@ -1,0 +1,15 @@
+# Git hooks (lefthook). Keep local hooks fast and narrow; CI owns the
+# exhaustive matrix. Install: `lefthook install` (or wire the same commands
+# into plain .git/hooks).
+
+pre-commit:
+  jobs:
+    # No glob: every commit — code or docs — runs the full gate suite.
+    - name: verification gates
+      run: node scripts/run-gates.mjs
+
+pre-push:
+  jobs:
+    - name: vet
+      run: go vet ./...
+    # Broader evidence selection lives in the pre-push-checks skill.
