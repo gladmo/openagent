@@ -9,6 +9,7 @@ package pico3
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -171,16 +172,43 @@ type Session struct {
 	nowFn               func() float64
 	tail                chan func()
 	tailStarted         bool
+	// onTail is true exactly while the tail goroutine executes a job. A
+	// Commit observing it runs inline instead of enqueueing: the call is
+	// re-entrant (from a commit callback or a listener) with respect to
+	// the single tail line, and enqueueing would wait for itself forever.
+	onTail atomic.Bool
+	// txnMu serializes transaction phases (invoker checks, storage
+	// commit, applyChanges). Listener dispatch never holds it, so an
+	// inline re-entrant commit from a listener cannot deadlock.
+	txnMu sync.Mutex
 }
 
-var sessionOwners = map[Storage]bool{}
+var (
+	sessionOwnersMu sync.Mutex
+	sessionOwners   = map[Storage]bool{}
+)
+
+func claimStorageOwner(storage Storage) error {
+	sessionOwnersMu.Lock()
+	defer sessionOwnersMu.Unlock()
+	if sessionOwners[storage] {
+		return fmt.Errorf("this Storage already has an owning Session")
+	}
+	sessionOwners[storage] = true
+	return nil
+}
+
+func releaseStorageOwner(storage Storage) {
+	sessionOwnersMu.Lock()
+	delete(sessionOwners, storage)
+	sessionOwnersMu.Unlock()
+}
 
 // NewSession builds a session owning one storage.
 func NewSession(storage Storage) (*Session, error) {
-	if sessionOwners[storage] {
-		return nil, fmt.Errorf("this Storage already has an owning Session")
+	if err := claimStorageOwner(storage); err != nil {
+		return nil, err
 	}
-	sessionOwners[storage] = true
 	return &Session{
 		Storage:             storage,
 		LiveTasks:           map[Id]*Task{},
@@ -198,6 +226,8 @@ func (s *Session) AddListener(listener SessionListener) {
 }
 
 func (s *Session) assertUsable() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.fault != nil {
 		return s.fault
 	}
@@ -207,20 +237,34 @@ func (s *Session) assertUsable() error {
 	return nil
 }
 
-func (s *Session) enqueue(job func()) {
+// enqueue hands one job to the tail line. A re-entrant call (observed via
+// onTail) runs inline; the job body serializes its own transaction phase
+// on txnMu, so an inline run never overlaps another transaction. The
+// channel send happens under mu so it can never race Close's close(tail).
+func (s *Session) enqueue(job func()) error {
+	if s.onTail.Load() {
+		job()
+		return nil
+	}
 	s.mu.Lock()
+	if s.closed || s.fault != nil {
+		s.mu.Unlock()
+		return s.assertUsable()
+	}
 	if !s.tailStarted {
 		s.tail = make(chan func(), 1024)
 		s.tailStarted = true
 		go func(jobs chan func()) {
 			for j := range jobs {
+				s.onTail.Store(true)
 				j()
+				s.onTail.Store(false)
 			}
 		}(s.tail)
 	}
-	queue := s.tail
+	s.tail <- job
 	s.mu.Unlock()
-	queue <- job
+	return nil
 }
 
 // Commit runs one transaction on the serialized line.
@@ -228,8 +272,25 @@ func (s *Session) Commit(invoker Invoker, fn func(tx *Tx) (any, error)) (*Commit
 	done := make(chan struct{})
 	var result *CommitResult
 	var err error
-	s.enqueue(func() {
+	if enqueueErr := s.enqueue(func() {
 		defer close(done)
+		result, err = s.runTransaction(invoker, fn)
+	}); enqueueErr != nil {
+		return nil, enqueueErr
+	}
+	<-done
+	return result, err
+}
+
+// runTransaction executes the transaction phase under txnMu and dispatches
+// listeners outside it: a listener may Commit again, and that inline call
+// must find txnMu free.
+func (s *Session) runTransaction(invoker Invoker, fn func(tx *Tx) (any, error)) (*CommitResult, error) {
+	s.txnMu.Lock()
+	var result *CommitResult
+	var err error
+	func() {
+		defer s.txnMu.Unlock()
 		if err = s.assertUsable(); err != nil {
 			return
 		}
@@ -240,8 +301,8 @@ func (s *Session) Commit(invoker Invoker, fn func(tx *Tx) (any, error)) (*Commit
 				err = &Forbidden{Message: "commit from a finished invocation"}
 				return
 			}
-			live, ok := s.LiveTasks[invoker.ID]
-			if !ok {
+			live := s.liveTask(invoker.ID)
+			if live == nil {
 				err = &Forbidden{Message: "commit from a task that is not live"}
 				return
 			}
@@ -261,9 +322,11 @@ func (s *Session) Commit(invoker Invoker, fn func(tx *Tx) (any, error)) (*Commit
 			committed, commitErr := s.Storage.Commit(tx.writes)
 			if commitErr != nil {
 				fault := &Faulted{Cause: commitErr}
+				s.mu.Lock()
 				s.fault = fault
+				s.mu.Unlock()
 				_ = s.Storage.Close()
-				delete(sessionOwners, s.Storage)
+				releaseStorageOwner(s.Storage)
 				err = fault
 				return
 			}
@@ -273,24 +336,38 @@ func (s *Session) Commit(invoker Invoker, fn func(tx *Tx) (any, error)) (*Commit
 		} else {
 			result = &CommitResult{Value: value, Changes: &tx.changes}
 		}
-		// Fan out to listeners; their errors are reported, never surfaced
-		// to the writer.
-		for _, listener := range s.listeners {
-			func() {
-				defer func() {
-					if r := recover(); r != nil && s.OnReport != nil {
-						s.OnReport(fmt.Errorf("%v", r))
-					}
-				}()
-				listener(result)
+	}()
+	if err != nil {
+		return nil, err
+	}
+	// Fan out to listeners; their errors are reported, never surfaced to
+	// the writer. The snapshot is taken under mu and dispatched outside
+	// every session lock.
+	s.mu.Lock()
+	listeners := append([]SessionListener{}, s.listeners...)
+	s.mu.Unlock()
+	for _, listener := range listeners {
+		func() {
+			defer func() {
+				if r := recover(); r != nil && s.OnReport != nil {
+					s.OnReport(fmt.Errorf("%v", r))
+				}
 			}()
-		}
-	})
-	<-done
-	return result, err
+			listener(result)
+		}()
+	}
+	return result, nil
+}
+
+func (s *Session) liveTask(id Id) *Task {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.LiveTasks[id]
 }
 
 func (s *Session) applyChanges(changes *TxChanges) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, task := range changes.Tasks {
 		if task.Status == "terminal" {
 			delete(s.LiveTasks, task.ID)
@@ -306,6 +383,8 @@ func (s *Session) applyChanges(changes *TxChanges) {
 
 // Subtree computes the conversation subtree under root via owner tasks.
 func (s *Session) Subtree(root Id) map[Id]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	out := map[Id]bool{root: true}
 	grew := true
 	for grew {
@@ -329,6 +408,8 @@ func (s *Session) Subtree(root Id) map[Id]bool {
 
 // Ancestors walks owner tasks up from a conversation.
 func (s *Session) Ancestors(id Id) []Id {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	chain := []Id{}
 	c := s.ConversationRecords[id]
 	for c != nil && c.Owner != nil {
@@ -347,7 +428,8 @@ func (s *Session) Ancestors(id Id) []Id {
 	return chain
 }
 
-// Close marks the session closed and releases storage ownership.
+// Close marks the session closed, drains the tail line, stops its
+// goroutine, and releases storage ownership.
 func (s *Session) Close() error {
 	s.mu.Lock()
 	if s.closed {
@@ -355,7 +437,18 @@ func (s *Session) Close() error {
 		return nil
 	}
 	s.closed = true
+	queue := s.tail
 	s.mu.Unlock()
-	delete(sessionOwners, s.Storage)
+	if queue != nil {
+		sentinel := make(chan struct{})
+		s.mu.Lock()
+		queue <- func() { close(sentinel) }
+		s.mu.Unlock()
+		<-sentinel
+		s.mu.Lock()
+		close(queue)
+		s.mu.Unlock()
+	}
+	releaseStorageOwner(s.Storage)
 	return s.Storage.Close()
 }

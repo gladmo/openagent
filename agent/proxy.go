@@ -271,6 +271,13 @@ func processProxyEvent(value any, partial *ai.AssistantMessage) (ai.AssistantMes
 	}
 	typ, _ := obj.Get("type")
 	contentIndex := proxyContentIndex(obj)
+	// The server controls contentIndex; an out-of-range value would either
+	// panic a negative index or allocate the slice up to it (one hostile
+	// line can request gigabytes). Legitimate streams number blocks
+	// sequentially, so at most one new slot at the end is ever valid.
+	if contentIndex < 0 || contentIndex > len(partial.Content) {
+		return nil, fmt.Errorf("Proxy event %v carried out-of-range contentIndex %d (content has %d blocks)", typ, contentIndex, len(partial.Content))
+	}
 	switch typ {
 	case "start":
 		return &ai.EventStart{Partial: partial}, nil

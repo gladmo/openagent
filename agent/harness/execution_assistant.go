@@ -7,6 +7,7 @@ import (
 	"github.com/gladmo/openagent/agent"
 	"github.com/gladmo/openagent/ai"
 	"github.com/gladmo/openagent/telemetry"
+	"sync"
 )
 
 // AssistantResponseMetadata captures HTTP response metadata before the
@@ -215,21 +216,29 @@ func StreamHarnessAssistant(
 		Tools:        config.Tools,
 	}
 
+	// Providers deliver response metadata from their streaming goroutine
+	// via OnResponse — after Request returns. The capture is mutex-guarded
+	// and read at hook time (post stream.Result), when the metadata exists.
+	var metadataMu sync.Mutex
 	var metadata AssistantResponseMetadata
 	hasMetadata := false
 	stream := config.Request(aiContext, createRequestOptions(config, func(next AssistantResponseMetadata) {
+		metadataMu.Lock()
 		metadata = next
 		hasMetadata = true
+		metadataMu.Unlock()
 	}, ctx), ctx)
 
 	var afterResponse func(message *ai.AssistantMessage, ctx Context) (*ai.AssistantMessage, error)
 	if config.AfterResponse != nil {
 		hook := config.AfterResponse
-		capturedMeta := metadata
-		capturedHas := hasMetadata
 		afterResponse = func(message *ai.AssistantMessage, afterCtx Context) (*ai.AssistantMessage, error) {
-			_ = capturedHas
-			return hook(message, capturedMeta, afterCtx)
+			metadataMu.Lock()
+			live := metadata
+			liveHas := hasMetadata
+			metadataMu.Unlock()
+			_ = liveHas
+			return hook(message, live, afterCtx)
 		}
 	}
 	return ConsumeAssistantStream(stream, config.Observer, afterResponse, ctx)

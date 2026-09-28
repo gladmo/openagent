@@ -6,7 +6,9 @@ package harness
 // arrive with the runtime port.
 
 import (
+	"fmt"
 	"sync"
+	"sync/atomic"
 
 	chordcontext "github.com/gladmo/openagent/chord/context"
 	"github.com/gladmo/openagent/jsonx"
@@ -59,7 +61,7 @@ func NewHookRegistry(reportError HookErrorReporter) *HookRegistry {
 	return &HookRegistry{registrations: map[string][]hookRegistration{}, reportError: reportError}
 }
 
-// On registers an ordered handler.
+// On registers an ordered handler. The returned disposer removes it.
 func (r *HookRegistry) On(name string, handler HookHandler, id ...string) func() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -67,9 +69,13 @@ func (r *HookRegistry) On(name string, handler HookHandler, id ...string) func()
 		panic(r.closedError)
 	}
 	registration := hookRegistration{handler: handler}
+	// The registrations slice holds copies, so removal matches by id; an
+	// anonymous handler gets a generated unique id.
+	registrationID := newHookRegistrationID()
 	if len(id) > 0 {
-		registration.id = id[0]
+		registrationID = id[0]
 	}
+	registration.id = registrationID
 	r.registrations[name] = append(r.registrations[name], registration)
 	removed := false
 	return func() {
@@ -81,12 +87,18 @@ func (r *HookRegistry) On(name string, handler HookHandler, id ...string) func()
 		removed = true
 		list := r.registrations[name]
 		for i := range list {
-			if &list[i] == &registration {
+			if list[i].id == registrationID {
 				r.registrations[name] = append(list[:i], list[i+1:]...)
 				return
 			}
 		}
 	}
+}
+
+var hookRegistrationSeq int64
+
+func newHookRegistrationID() string {
+	return fmt.Sprintf("anon-%d", atomic.AddInt64(&hookRegistrationSeq, 1))
 }
 
 // Has reports whether any handler is registered.
@@ -193,6 +205,9 @@ func (r *HookRegistry) beforeRun(event *jsonx.Obj, ctx Context) *jsonx.Obj {
 			r.report(err, HookBeforeRun, event, ctx)
 			continue
 		}
+		if result == nil {
+			continue
+		}
 		if messages, ok := result.Get("messages"); ok && messages != nil {
 			if list, ok := messages.([]any); ok {
 				injected = append(injected, list...)
@@ -221,6 +236,9 @@ func (r *HookRegistry) beforeTool(event *jsonx.Obj, ctx Context) *jsonx.Obj {
 			r.report(err, HookBeforeTool, event, ctx)
 			block = jsonx.ObjFrom("reason", err.Error())
 			break
+		}
+		if result == nil {
+			continue
 		}
 		if nextArgs, ok := result.Get("args"); ok && nextArgs != nil {
 			args = nextArgs
@@ -259,6 +277,9 @@ func (r *HookRegistry) transformContext(event *jsonx.Obj, ctx Context) *jsonx.Ob
 			r.report(err, HookTransformContext, event, ctx)
 			continue
 		}
+		if result == nil {
+			continue
+		}
 		if next, ok := result.Get("messages"); ok && next != nil {
 			messages = next
 		}
@@ -288,6 +309,9 @@ func (r *HookRegistry) beforeRequest(event *jsonx.Obj, ctx Context) *jsonx.Obj {
 			r.report(err, HookBeforeRequest, event, ctx)
 			continue
 		}
+		if result == nil {
+			continue
+		}
 		if patchValue, ok := result.Get("streamOptions"); ok {
 			if patchObj, ok := patchValue.(*jsonx.Obj); ok {
 				patch := streamOptionsPatchFromJSON(patchObj)
@@ -314,6 +338,9 @@ func (r *HookRegistry) beforePayload(event *jsonx.Obj, ctx Context) *jsonx.Obj {
 			r.report(err, HookBeforePayload, event, ctx)
 			continue
 		}
+		if result == nil {
+			continue
+		}
 		if next, ok := result.Get("payload"); ok && next != nil {
 			payload = next
 		}
@@ -330,6 +357,9 @@ func (r *HookRegistry) afterResponse(event *jsonx.Obj, ctx Context) *jsonx.Obj {
 		result, err := registration.handler(current, ctx)
 		if err != nil {
 			r.report(err, HookAfterResponse, event, ctx)
+			continue
+		}
+		if result == nil {
 			continue
 		}
 		if next, ok := result.Get("message"); ok && next != nil {
@@ -356,6 +386,9 @@ func (r *HookRegistry) afterTool(event *jsonx.Obj, ctx Context) *jsonx.Obj {
 		result, err := r.invokeToolRegistration(HookAfterTool, registration, invocation, ctx)
 		if err != nil {
 			r.report(err, HookAfterTool, event, ctx)
+			continue
+		}
+		if result == nil {
 			continue
 		}
 		for _, key := range []string{"content", "details", "isError", "usage", "terminate"} {
@@ -458,6 +491,9 @@ func (r *HookRegistry) invokeAll(name string, event *jsonx.Obj, apply func(*json
 		result, err := registration.handler(event, ctx)
 		if err != nil {
 			r.report(err, name, event, ctx)
+			continue
+		}
+		if result == nil {
 			continue
 		}
 		apply(result)

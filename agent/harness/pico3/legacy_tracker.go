@@ -2,9 +2,11 @@ package pico3
 
 // legacy_tracker.go ports harness/pico3/legacy-tracker.ts: the flush-based
 // document tracker compatibility surface. The TS tracker rides on chord's
-// proxy-based change tracking; the Go port diffs the working copy against
-// the base (top-level key diff -> Set/Delete ops; nested values are set
-// whole) and always emits a Replace base op first, matching rebase().
+// proxy-based change tracking; the Go port has no proxies, so it keeps a
+// DEEP-copied base and working copy and diffs them (top-level key diff ->
+// Set/Delete ops; nested values are set whole). The copies must be deep:
+// a shallow copy would alias nested objects, and nested in-place mutations
+// would never show up in the diff.
 
 import (
 	chorddelta "github.com/gladmo/openagent/chord/delta"
@@ -21,8 +23,8 @@ type Tracker struct {
 
 // Track builds a tracker over an initial object state.
 func Track(initial *jsonx.Obj) *Tracker {
-	base := cloneJSONObj(initial)
-	working := cloneJSONObj(initial)
+	base := deepCloneObj(initial)
+	working := deepCloneObj(initial)
 	return &Tracker{base: base, working: working, forceBase: true}
 }
 
@@ -48,14 +50,27 @@ func (t *Tracker) Flush() []chorddelta.Op {
 	var prepared []chorddelta.Op
 	if t.hasChange {
 		prepared = diffObjects(t.base, t.working)
-		t.base = cloneJSONObj(t.working)
+		t.base = deepCloneObj(t.working)
 		t.hasChange = false
 	}
 	if t.forceBase {
 		t.forceBase = false
-		return []chorddelta.Op{&chorddelta.Replace{Value: cloneJSONObj(t.base)}}
+		return []chorddelta.Op{&chorddelta.Replace{Value: deepCloneObj(t.base)}}
 	}
 	return prepared
+}
+
+// deepCloneObj copies a jsonx object value deeply (chord CopyJson), so the
+// base and the working copy share no nested state.
+func deepCloneObj(obj *jsonx.Obj) *jsonx.Obj {
+	if obj == nil {
+		return jsonx.NewObj()
+	}
+	cloned, ok := Clone(obj).(*jsonx.Obj)
+	if !ok || cloned == nil {
+		return jsonx.NewObj()
+	}
+	return cloned
 }
 
 // Rebase forces the next flush to emit a base op.

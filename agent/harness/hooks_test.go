@@ -281,3 +281,61 @@ func TestHookSpansRecorded(t *testing.T) {
 		t.Fatalf("lane = %v", lane)
 	}
 }
+
+func TestHookDisposerRemovesHandler(t *testing.T) {
+	var errors []string
+	registry := hookRegistryWithErrors(&errors)
+	calls := 0
+	dispose := registry.On(HookBeforeRun, func(*jsonx.Obj, Context) (*jsonx.Obj, error) {
+		calls++
+		return nil, nil
+	})
+	if !registry.Has(HookBeforeRun) {
+		t.Fatal("registration missing")
+	}
+	dispose()
+	// Idempotent.
+	dispose()
+	if registry.Has(HookBeforeRun) {
+		t.Fatal("disposer left the handler registered")
+	}
+	if _, err := registry.Run(HookBeforeRun, hookEvent("prompt", []any{}), BackgroundContext); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Fatalf("removed handler invoked %d time(s)", calls)
+	}
+}
+
+// HookHandler's contract allows a nil result payload (no change); every
+// aggregator must tolerate it.
+func TestHookNilResultsTolerated(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("nil hook result panicked: %v", r)
+		}
+	}()
+	var errors []string
+	registry := hookRegistryWithErrors(&errors)
+	nilHandler := func(*jsonx.Obj, Context) (*jsonx.Obj, error) { return nil, nil }
+	for _, name := range []string{
+		HookBeforeRun, HookBeforeTool, HookTransformContext, HookBeforeRequest,
+		HookBeforePayload, HookAfterResponse, HookAfterTool,
+	} {
+		registry.On(name, nilHandler)
+	}
+	events := map[string]*jsonx.Obj{
+		HookBeforeRun:        hookEvent("prompt", []any{}),
+		HookBeforeTool:       hookEvent("args", jsonx.NewObj()),
+		HookTransformContext: hookEvent("messages", []any{}, "systemPrompt", ""),
+		HookBeforeRequest:    hookEvent("streamOptions", jsonx.NewObj()),
+		HookBeforePayload:    hookEvent("payload", "p"),
+		HookAfterResponse:    hookEvent("message", jsonx.NewObj()),
+		HookAfterTool:        hookEvent("content", "x"),
+	}
+	for name, event := range events {
+		if _, err := registry.Run(name, event, BackgroundContext); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+}

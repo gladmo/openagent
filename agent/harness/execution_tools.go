@@ -132,9 +132,11 @@ func ApplyBeforeToolDecision(prepared *PreparedToolCall, decision *BeforeToolDec
 	return &ClearedToolCall{ToolCall: prepared.ToolCall, Tool: prepared.Tool, Args: args.(*jsonx.Obj)}, nil
 }
 
-// ExecuteToolCall executes one cleared external tool effect, converting
-// expected tool throws to error output. Panics with AbortRequested when the
-// gate rejects admission (mirroring the TS gate.admit throw).
+// ExecuteToolCall executes one cleared external tool effect. A tool that
+// panics (Go's throw) converts to an isErrored result, mirroring the TS
+// conversion of tool throws to error output; AbortRequested keeps unwinding
+// to the caller (mirroring the TS gate.admit throw). Panics with
+// AbortRequested when the gate rejects admission.
 func ExecuteToolCall(
 	call *ClearedToolCall,
 	gate Gate,
@@ -143,13 +145,9 @@ func ExecuteToolCall(
 	invocation AgentHarnessToolInvocation,
 	ctx Context,
 ) (executed *ExecutedToolCall, admitted bool) {
-	panicGateAbort := func() bool {
-		defer func() { _ = recover() }()
-		gate.Admit(func() {})
-		return false
+	if onUpdate == nil {
+		onUpdate = func(*agent.AgentToolResult, *AgentHarnessToolUpdateOptions) {}
 	}
-	_ = panicGateAbort
-
 	result := func() (outcome *ExecutedToolCall) {
 		gate.Admit(func() {
 			admittedContext := WithAbortSignal(gate.Signal(), ctx)
@@ -158,10 +156,14 @@ func ExecuteToolCall(
 			}
 			acceptingUpdates := true
 			defer func() { acceptingUpdates = false }()
-			if r := recover(); r != nil {
-				outcome = &ExecutedToolCall{Result: executionErrorToolResult(ToError(r).Error()), IsError: true}
-				return
-			}
+			defer func() {
+				if r := recover(); r != nil {
+					if _, isAbort := r.(*AbortRequested); isAbort {
+						panic(r)
+					}
+					outcome = &ExecutedToolCall{Result: executionErrorToolResult(ToError(r).Error()), IsError: true}
+				}
+			}()
 			result, err := call.Tool.Execute(
 				call.ToolCall.ID,
 				call.Args,

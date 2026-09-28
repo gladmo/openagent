@@ -101,6 +101,11 @@ func RunAgentLoop(
 	signal *abort.Signal,
 	streamFn StreamFn,
 ) ([]AgentMessage, error) {
+	resolved, err := resolveStreamFn(streamFn)
+	if err != nil {
+		return nil, err
+	}
+	streamFn = resolved
 	initialMessages := declareToolChanges(context, prompts)
 	newMessages := append([]AgentMessage{}, initialMessages...)
 	currentContext := &AgentContext{
@@ -115,11 +120,20 @@ func RunAgentLoop(
 		emit(&EventMessageEnd{Message: message})
 	}
 
-	newMessages, err := runLoop(currentContext, newMessages, config, signal, emit, streamFn)
-	if err != nil {
-		return newMessages, err
+	newMessages, loopErr := runLoop(currentContext, newMessages, config, signal, emit, streamFn)
+	if loopErr != nil {
+		return newMessages, loopErr
 	}
 	return newMessages, nil
+}
+
+// resolveStreamFn applies the process-global default when the caller
+// omitted streamFn, failing loud before the first model call.
+func resolveStreamFn(streamFn StreamFn) (StreamFn, error) {
+	if streamFn != nil {
+		return streamFn, nil
+	}
+	return GetDefaultStreamFn()
 }
 
 // RunAgentLoopContinue runs the loop from the existing context.
@@ -133,15 +147,22 @@ func RunAgentLoopContinue(
 	if err := validateContinueContext(context); err != nil {
 		return nil, err
 	}
+	resolved, err := resolveStreamFn(streamFn)
+	if err != nil {
+		return nil, err
+	}
+	streamFn = resolved
+	// The caller's backing array is private to the caller: the loop appends
+	// and replaces entries in place (TS copies the array).
 	newMessages := []AgentMessage{}
-	currentContext := &AgentContext{Messages: context.Messages, Tools: context.Tools}
+	currentContext := &AgentContext{Messages: append([]AgentMessage{}, context.Messages...), Tools: context.Tools}
 
 	emit(&EventAgentStart{})
 	emit(&EventTurnStart{})
 
-	newMessages, err := runLoop(currentContext, newMessages, config, signal, emit, streamFn)
-	if err != nil {
-		return newMessages, err
+	newMessages, loopErr := runLoop(currentContext, newMessages, config, signal, emit, streamFn)
+	if loopErr != nil {
+		return newMessages, loopErr
 	}
 	return newMessages, nil
 }
@@ -845,6 +866,11 @@ func executePreparedToolCall(
 	})
 	if err != nil {
 		return &immediateOutcome{result: createErrorToolResult(err.Error()), isError: true}
+	}
+	if result == nil {
+		// A tool returning (nil, nil) would nil-deref the loop's
+		// finalization; convert it to an error result like a throw.
+		return &immediateOutcome{result: createErrorToolResult("Tool " + prepared.toolCall.Name + " returned no result"), isError: true}
 	}
 	return &immediateOutcome{result: result, isError: false}
 }

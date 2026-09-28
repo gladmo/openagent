@@ -102,25 +102,43 @@ func (s *Signal) Done() <-chan struct{} {
 
 // OnAbort registers fn to run when the signal aborts and returns a remove
 // function. Listeners run synchronously in registration order inside Abort().
-// As in JS, a listener registered on an already-aborted signal never runs.
-// The returned remove function is idempotent.
+// As in JS, a listener registered on an already-aborted signal never runs
+// (and is not retained). The returned remove function is idempotent.
 func (s *Signal) OnAbort(fn func()) (remove func()) {
 	if s == nil {
 		return func() {}
 	}
+	return s.register(fn, false)
+}
+
+// register requires s != nil. The aborted-check and the listener append
+// happen under one lock acquisition, so an abort racing a registration can
+// never fall between them. When fireIfAborted is set and the signal has
+// already aborted, fn runs immediately after the unlock (abort state is
+// final, so deferring past the lock loses nothing).
+func (s *Signal) register(fn func(), fireIfAborted bool) (remove func()) {
 	s.mu.Lock()
+	if s.aborted {
+		s.mu.Unlock()
+		if fireIfAborted {
+			fn()
+		}
+		return func() {}
+	}
 	s.nextListenerID++
 	id := s.nextListenerID
 	s.listeners = append(s.listeners, listenerEntry{id: id, fn: fn})
 	s.mu.Unlock()
-	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		for i, l := range s.listeners {
-			if l.id == id {
-				s.listeners = append(s.listeners[:i], s.listeners[i+1:]...)
-				return
-			}
+	return func() { s.removeByID(id) }
+}
+
+func (s *Signal) removeByID(id int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, l := range s.listeners {
+		if l.id == id {
+			s.listeners = append(s.listeners[:i], s.listeners[i+1:]...)
+			return
 		}
 	}
 }
@@ -182,6 +200,15 @@ func NewAbortedSignal(reason any) *Signal {
 // the reason of the first source to abort (matching AbortSignal.any). Nil
 // signals are ignored. Any() with no effective sources never aborts.
 func Any(signals ...*Signal) *Signal {
+	derived, _ := AnyWithDispose(signals...)
+	return derived
+}
+
+// AnyWithDispose is Any plus the disposer: calling the returned function
+// removes every registration made on the source signals (the derived
+// signal's own state is unaffected). Callers that derive per attempt from
+// long-lived signals must dispose to avoid unbounded listener growth.
+func AnyWithDispose(signals ...*Signal) (*Signal, func()) {
 	live := make([]*Signal, 0, len(signals))
 	for _, s := range signals {
 		if s != nil {
@@ -190,18 +217,25 @@ func Any(signals ...*Signal) *Signal {
 	}
 	for _, s := range live {
 		if s.Aborted() {
-			return NewAbortedSignal(s.Reason())
+			return NewAbortedSignal(s.Reason()), func() {}
 		}
 	}
 	derived := &Signal{done: make(chan struct{})}
 	derivedCtrl := NewController()
 	derivedCtrl.signal = derived
+	removes := make([]func(), 0, len(live))
 	for _, src := range live {
-		src.OnAbort(func() {
+		src := src
+		removes = append(removes, src.register(func() {
 			derivedCtrl.AbortReason(src.Reason())
-		})
+		}, true))
 	}
-	return derived
+	dispose := func() {
+		for _, remove := range removes {
+			remove()
+		}
+	}
+	return derived, dispose
 }
 
 // FromGoContext returns a signal that aborts with the context's error when the
@@ -226,13 +260,14 @@ func FromGoContext(ctx context.Context) *Signal {
 
 // ToGoContext returns a context.Context that is canceled when the signal
 // aborts (or when the returned cancel function is called). A nil signal yields
-// a context derived only from parent.
+// a context derived only from parent. A signal that aborted before the call
+// still yields an immediately-canceled context.
 func ToGoContext(parent context.Context, s *Signal) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(parent)
 	if s == nil {
 		return ctx, cancel
 	}
-	remove := s.OnAbort(func() { cancel() })
+	remove := s.register(func() { cancel() }, true)
 	return ctx, func() {
 		remove()
 		cancel()

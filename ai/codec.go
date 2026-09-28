@@ -289,6 +289,9 @@ func contentFromJSON(v any) Content {
 	return BlocksContent(blocks...)
 }
 
+// blockFromJSON decodes persisted content blocks. Missing or wrong-typed
+// fields decode as zero values (TS reads them as undefined); decoding
+// crashes on nothing — this runs inside crash recovery.
 func blockFromJSON(v any) (ContentBlock, bool) {
 	obj, ok := v.(*jsonx.Obj)
 	if !ok {
@@ -297,46 +300,39 @@ func blockFromJSON(v any) (ContentBlock, bool) {
 	typ, _ := obj.Get("type")
 	switch typ {
 	case "text":
-		text, _ := obj.Get("text")
-		tc := TextContent{Text: text.(string)}
+		tc := TextContent{Text: stringField(obj, "text")}
 		if sig, ok := obj.Get("textSignature"); ok {
-			s := sig.(string)
-			tc.TextSignature = &s
+			tc.TextSignature = strPtr(sig)
 		}
 		return tc, true
 	case "thinking":
-		thinking, _ := obj.Get("thinking")
-		tc := ThinkingContent{Thinking: thinking.(string)}
+		tc := ThinkingContent{Thinking: stringField(obj, "thinking")}
 		if sig, ok := obj.Get("thinkingSignature"); ok {
-			s := sig.(string)
-			tc.ThinkingSignature = &s
+			tc.ThinkingSignature = strPtr(sig)
 		}
 		if red, ok := obj.Get("redacted"); ok {
-			b := red.(bool)
-			tc.Redacted = &b
+			if b, ok := red.(bool); ok {
+				tc.Redacted = &b
+			}
 		}
 		return tc, true
 	case "image":
-		data, _ := obj.Get("data")
-		mime, _ := obj.Get("mimeType")
-		return ImageContent{Data: data.(string), MimeType: mime.(string)}, true
+		return ImageContent{Data: stringField(obj, "data"), MimeType: stringField(obj, "mimeType")}, true
 	case "toolCall":
-		id, _ := obj.Get("id")
-		name, _ := obj.Get("name")
-		args, _ := obj.Get("arguments")
-		tc := &ToolCall{ID: id.(string), Name: name.(string)}
-		if obj, ok := args.(*jsonx.Obj); ok {
-			tc.Arguments = obj
-		} else {
+		tc := &ToolCall{ID: stringField(obj, "id"), Name: stringField(obj, "name")}
+		if args, ok := obj.Get("arguments"); ok {
+			if argsObj, ok := args.(*jsonx.Obj); ok {
+				tc.Arguments = argsObj
+			}
+		}
+		if tc.Arguments == nil {
 			tc.Arguments = jsonx.NewObj()
 		}
 		if sig, ok := obj.Get("thoughtSignature"); ok {
-			s := sig.(string)
-			tc.ThoughtSignature = &s
+			tc.ThoughtSignature = strPtr(sig)
 		}
 		if ns, ok := obj.Get("namespace"); ok {
-			s := ns.(string)
-			tc.Namespace = &s
+			tc.Namespace = strPtr(ns)
 		}
 		return tc, true
 	default:

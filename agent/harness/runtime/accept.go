@@ -86,7 +86,9 @@ func AcceptRun(
 			}}
 		}
 
-		// Validate each selected pending payload.
+		// Validate each selected pending payload; keep the payloads for
+		// materialization below.
+		payloads := map[string]*jsonx.Obj{}
 		for _, item := range selected {
 			stored, err := reader.GetValue(session.PendingEntryValue(item.EntryID), ctx)
 			if err != nil {
@@ -111,6 +113,7 @@ func AcceptRun(
 					}
 				}
 			}
+			payloads[item.EntryID] = payload
 		}
 
 		// Installation writes: prompt entries + op.meta + op.state + lane.state.
@@ -132,27 +135,45 @@ func AcceptRun(
 		)
 		stateObj.Set("settings", settings)
 
+		// Prompts and captured inbox items all materialize as entries
+		// chained from the tip (the boundary planner does the same when it
+		// consumes inbox items); the pending payloads are consumed.
 		var writes []session.Write
+		parentID := state.TipID
 		for _, prompt := range prompts {
 			entry := &session.Entry{
-				EntryBase: session.EntryBase{ID: prompt.ID, ParentID: state.TipID, Type: session.EntryTypeMessage},
+				EntryBase: session.EntryBase{ID: prompt.ID, ParentID: parentID, Type: session.EntryTypeMessage},
 				Message:   session.AgentMessagePayload{Role: stringOfObjKey(prompt.Message, "role"), Message: prompt.Message},
 			}
 			writes = append(writes, session.InsertEntry(entry))
+			id := prompt.ID
+			parentID = &id
+		}
+		for _, item := range selected {
+			entry := PendingEntryWrite(item.EntryID, payloads[item.EntryID])
+			entry.ParentID = parentID
+			parentID = &item.EntryID
+			writes = append(writes, session.InsertEntry(entry))
+		}
+		for _, item := range selected {
+			writes = append(writes, session.WriteFromValue(session.DeleteValue(session.PendingEntryValue(item.EntryID))))
 		}
 		writes = append(writes,
 			session.WriteFromValue(session.SetValue(session.OperationMetaValue(operationID), meta)),
 			session.WriteFromValue(session.SetValue(session.OperationStateValue(operationID), stateObj)),
-			session.WriteFromValue(session.SetValue(session.LaneStateValue(lane.Name), DurableLaneStateJSON(&operationID, nil, remainder))),
+			session.WriteFromValue(session.SetValue(session.LaneStateValue(lane.Name), DurableLaneStateJSON(&operationID, state.LastOperationID, remainder))),
 		)
+		// The durable tip advances with the materialized entries so
+		// snapshots and crash restore see the run's opening transcript.
+		tipAdvanced := parentID != nil && (state.TipID == nil || *parentID != *state.TipID)
+		if tipAdvanced {
+			writes = append(writes, session.WriteFromValue(session.SetValue(session.BranchTip(lane.Name), *parentID)))
+		}
 
 		nextState := *state
 		nextState.Inbox = remainder
-		// The tip advances to the last prompt entry when prompts exist.
-		if len(prompts) > 0 {
-			lastPrompt := prompts[len(prompts)-1].ID
-			nextState.TipID = &lastPrompt
-		}
+		// The tip advances to the last materialized entry.
+		nextState.TipID = parentID
 		nextState.Operation = &session.Operation{
 			Meta: session.OperationMeta{
 				OperationID: operationID,

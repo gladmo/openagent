@@ -466,7 +466,9 @@ func (e *AssistantMessageFrameEncoder) Encode(event AssistantMessageEvent) Assis
 		if !ok {
 			panic(fmt.Sprintf("text_start event points to %s block at index %d", content.ContentType(), t.ContentIndex))
 		}
-		e.startBlock(t.ContentIndex, &encoderBlockState{kind: "text", coveredChars: len([]rune(text.Text))})
+		// coveredChars counts bytes: delta accounting below also counts
+		// bytes, and the uncovered slice is cut on that boundary.
+		e.startBlock(t.ContentIndex, &encoderBlockState{kind: "text", coveredChars: len(text.Text)})
 		return &FrameTextStart{ContentIndex: t.ContentIndex, Content: cloneTextContent(text)}
 	case *EventTextDelta:
 		return e.encodeTextDelta(t.ContentIndex, t.Delta, "text")
@@ -484,7 +486,7 @@ func (e *AssistantMessageFrameEncoder) Encode(event AssistantMessageEvent) Assis
 		if !ok {
 			panic(fmt.Sprintf("thinking_start event points to %s block at index %d", content.ContentType(), t.ContentIndex))
 		}
-		e.startBlock(t.ContentIndex, &encoderBlockState{kind: "thinking", coveredChars: len([]rune(thinking.Thinking))})
+		e.startBlock(t.ContentIndex, &encoderBlockState{kind: "thinking", coveredChars: len(thinking.Thinking)})
 		return &FrameThinkingStart{ContentIndex: t.ContentIndex, Content: cloneThinkingContent(thinking)}
 	case *EventThinkingDelta:
 		return e.encodeTextDelta(t.ContentIndex, t.Delta, "thinking")

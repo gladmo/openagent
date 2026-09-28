@@ -93,7 +93,9 @@ func RunRetryWait(lane *Lane, drive *Drive, generation *session.OperationState) 
 		_ = decision
 	}
 	if now < generation.NotBefore && drive.WaitForRetry {
-		if err := WaitUntilNotBefore(generation.NotBefore, nil); err != nil {
+		// The backoff wait honors the drive's abort signal; a
+		// cancel_requested during backoff must interrupt the sleep.
+		if err := WaitUntilNotBefore(generation.NotBefore, drive.Context.AbortSignal()); err != nil {
 			return nil, err
 		}
 	}

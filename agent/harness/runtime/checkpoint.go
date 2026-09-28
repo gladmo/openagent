@@ -35,10 +35,15 @@ func StartRun(lane *Lane, drive *Drive, run *session.OperationState) (*Procedure
 		messages := make([]*jsonx.Obj, 0, len(promptEntryIDs(meta)))
 		for _, id := range promptEntryIDs(meta) {
 			entry, ok := entries[id]
-			if !ok || entry.Type != session.EntryTypeMessage {
+			if !ok {
 				return &OperationCommand{Kind: OperationCommandReject, Error: &session.SessionInvariantError{Message: fmt.Sprintf("Run prompt entry %s is missing its message", id)}}
 			}
-			messages = append(messages, entry.Message.Message)
+			// Captured inbox items materialize at accept: message payloads
+			// join the prompt; projected write entries are part of the
+			// transcript but carry no prompt message.
+			if entry.Type == session.EntryTypeMessage {
+				messages = append(messages, entry.Message.Message)
+			}
 		}
 		return &OperationCommand{Kind: OperationCommandReturn, Result: messages}
 	}, ctx)
@@ -185,7 +190,6 @@ func DefaultThreshold(lane *Lane, drive *Drive, state *session.OperationState, s
 // RunCheckpoint advances one durable run boundary with at most one commit.
 func RunCheckpoint(lane *Lane, drive *Drive, run *session.OperationState) (*ProcedureResult, error) {
 	ctx := drive.Context
-	SetLaneName(lane.Name)
 
 	var threshold *ThresholdPreparation
 	if PrepareCompactionThreshold != nil {
@@ -213,7 +217,7 @@ func RunCheckpoint(lane *Lane, drive *Drive, run *session.OperationState) (*Proc
 			state.Inbox, steeringModeOf(current), followUpModeOf(current),
 			reader, state.TipID,
 			threshold == nil && continuationKind == "may_finish",
-			projectorSetOf(lane), ctx,
+			projectorSetOf(lane), lane.Name, ctx,
 		)
 		if err != nil {
 			return &OperationCommand{Kind: OperationCommandReject, Error: err}
@@ -340,7 +344,6 @@ func overflowRecoveryUsedOf(continuation *jsonx.Obj) bool {
 // completed record.
 func FinishRunBoundary(lane *Lane, drive *Drive, capability *session.OperationState, continuation *jsonx.Obj, plannedEntryIDs []string, pendingEvents []HarnessEvent) (*ProcedureResult, error) {
 	ctx := drive.Context
-	SetLaneName(lane.Name)
 
 	includeFinalAssistant := false
 	if continuation != nil {
@@ -352,7 +355,7 @@ func FinishRunBoundary(lane *Lane, drive *Drive, capability *session.OperationSt
 	result, err := lane.ContinueOperation(func(state *RuntimeLaneState, current *session.OperationState, meta *session.OperationMeta, reader session.SessionReader) *OperationCommand {
 		placement, err := PlanBoundaryInbox(
 			state.Inbox, steeringModeOf(current), followUpModeOf(current),
-			reader, state.TipID, true, projectorSetOf(lane), ctx,
+			reader, state.TipID, true, projectorSetOf(lane), lane.Name, ctx,
 		)
 		if err != nil {
 			return &OperationCommand{Kind: OperationCommandReject, Error: err}

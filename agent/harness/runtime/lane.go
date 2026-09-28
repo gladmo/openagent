@@ -284,10 +284,14 @@ type errIdleBlockedRetry struct{}
 
 func (errIdleBlockedRetry) Error() string { return "idle blocked; retry" }
 
-// emitEvents is the post-line event hook (wired by the facade).
+// emitEvents is the post-line event hook (wired by the facade). Command
+// callers run on their own goroutines, so the sink append takes the lane
+// mutex, matching DrainEvents.
 func (l *Lane) emitEvents(events []HarnessEvent, _ harness.Context) {
 	// The bus arrives with the harness facade; lanes expose the batch.
+	l.mu.Lock()
 	l.eventsSink = append(l.eventsSink, events...)
+	l.mu.Unlock()
 }
 
 // DrainEvents returns and clears collected post-line events (facade hook).

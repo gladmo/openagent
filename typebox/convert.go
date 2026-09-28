@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/gladmo/openagent/jsonx"
 )
@@ -211,9 +212,15 @@ func tryBoolean(value any) (any, bool) {
 	}
 }
 
-var patternCache = map[string]*regexp.Regexp{}
+// patternCache caches compiled patterns; Check runs on caller goroutines
+// (parallel tool-argument validation), so access is synchronized.
+var (
+	patternCacheMu sync.Mutex
+	patternCache   = map[string]*regexp.Regexp{}
+)
 
 func patternMatches(pattern, s string) bool {
+	patternCacheMu.Lock()
 	re, ok := patternCache[pattern]
 	if !ok {
 		compiled, compileErr := regexp.Compile(pattern)
@@ -226,6 +233,7 @@ func patternMatches(pattern, s string) bool {
 		}
 		patternCache[pattern] = re
 	}
+	patternCacheMu.Unlock()
 	if re == nil {
 		return false
 	}

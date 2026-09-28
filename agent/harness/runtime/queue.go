@@ -48,27 +48,16 @@ func QueueMessage(lane *Lane, kind, text string, images []any, ctx sessionCtxAli
 
 	result, err := lane.Command(func(state *RuntimeLaneState, reader session.SessionReader) *LaneCommand {
 		inbox := append(append([]session.InboxItem{}, state.Inbox...), session.InboxItem{EntryID: entryID, Kind: kind})
+		// The event carries the post-commit queues, so watchers see the
+		// message they just queued. The staged item's payload is not yet
+		// durable at plan time, so it joins the snapshot directly.
 		queues, err := ReadLaneQueues(reader, state.Inbox, ctx)
 		if err != nil {
 			return &LaneCommand{Kind: LaneCommandReject, Error: err}
 		}
+		queues = append(queues, LaneQueuedItem{EntryID: entryID, Kind: kind})
 		queueEvent := eventLane(lane.Name, "queue_update")
-		queuesJSON := jsonx.NewObj()
-		steering := make([]any, 0, len(queues))
-		followUp := make([]any, 0, len(queues))
-		for _, item := range queues {
-			obj := jsonx.ObjFrom("entryId", item.EntryID, "kind", item.Kind)
-			switch item.Kind {
-			case "steer":
-				steering = append(steering, obj)
-			case "followUp":
-				followUp = append(followUp, obj)
-			}
-		}
-		queuesJSON.Set("steering", steering)
-		queuesJSON.Set("followUp", followUp)
-		queuesJSON.Set("nextRun", nil)
-		queueEvent.Set("queues", queuesJSON)
+		queueEvent.Set("queues", queuesToJSON(queuesFromItems(queues)))
 
 		currentOp := ""
 		if state.Operation != nil {
@@ -76,7 +65,7 @@ func QueueMessage(lane *Lane, kind, text string, images []any, ctx sessionCtxAli
 		}
 		writes := []session.Write{
 			session.WriteFromValue(session.SetValue(session.PendingEntryValue(entryID), jsonx.ObjFrom("type", "message", "payload", message))),
-			session.WriteFromValue(session.SetValue(session.LaneStateValue(lane.Name), durableStateJSON(currentOp, inbox))),
+			session.WriteFromValue(session.SetValue(session.LaneStateValue(lane.Name), durableStateJSON(currentOp, state.LastOperationID, inbox))),
 		}
 		next := *state
 		next.Inbox = inbox
@@ -94,12 +83,14 @@ func QueueMessage(lane *Lane, kind, text string, images []any, ctx sessionCtxAli
 	return result.(*QueueResult), nil
 }
 
-func durableStateJSON(currentOp string, inbox []session.InboxItem) *jsonx.Obj {
+// durableStateJSON preserves the durable lastOperationId across queue
+// writes (the abort path does the same).
+func durableStateJSON(currentOp string, lastOp *string, inbox []session.InboxItem) *jsonx.Obj {
 	var current *string
 	if currentOp != "" {
 		current = &currentOp
 	}
-	return DurableLaneStateJSON(current, nil, inbox)
+	return DurableLaneStateJSON(current, lastOp, inbox)
 }
 
 // CancelQueued removes one queued entry: queued -> cancel; already an
@@ -141,14 +132,14 @@ func CancelQueued(lane *Lane, entryID string, ctx sessionCtxAlias) (*CancelQueue
 			return &LaneCommand{Kind: LaneCommandReject, Error: err}
 		}
 		queueEvent := eventLane(lane.Name, "queue_update")
-		_ = queues
+		queueEvent.Set("queues", queuesToJSON(queuesFromItems(queues)))
 		currentOp := ""
 		if state.Operation != nil {
 			currentOp = state.Operation.Meta.OperationID
 		}
 		writes := []session.Write{
 			session.WriteFromValue(session.DeleteValue(session.PendingEntryValue(entryID))),
-			session.WriteFromValue(session.SetValue(session.LaneStateValue(lane.Name), durableStateJSON(currentOp, inbox))),
+			session.WriteFromValue(session.SetValue(session.LaneStateValue(lane.Name), durableStateJSON(currentOp, state.LastOperationID, inbox))),
 		}
 		next := *state
 		next.Inbox = inbox

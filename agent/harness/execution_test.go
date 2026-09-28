@@ -212,6 +212,42 @@ func TestExecuteAndFinalizeToolCall(t *testing.T) {
 	if text := ai.ContentText(ai.BlocksContent(executedThrow.Result.Content...), "\n"); text != "tool exploded" {
 		t.Fatalf("error text = %q", text)
 	}
+
+	// A tool panic (the Go equivalent of a TS throw) converts to error
+	// output instead of unwinding past ExecuteToolCall.
+	panicking := echoHarnessTool()
+	panicking.Execute = func(string, any, AgentHarnessToolUpdateCallback, any, AgentHarnessToolInvocation, Context) (*agent.AgentToolResult, error) {
+		panic(ToError("boom: file not found"))
+	}
+	preparedPanic, _ := PrepareToolCall(call, []*AgentHarnessTool{panicking})
+	clearedPanic, _ := ApplyBeforeToolDecision(preparedPanic, nil)
+	executedPanic, _ := ExecuteToolCall(clearedPanic, gate, nil, nil, nil, BackgroundContext)
+	if !executedPanic.IsError {
+		t.Fatal("panic not converted to error")
+	}
+	if text := ai.ContentText(ai.BlocksContent(executedPanic.Result.Content...), "\n"); text != "boom: file not found" {
+		t.Fatalf("panic error text = %q", text)
+	}
+
+	// AbortRequested from inside the effect keeps unwinding to the caller.
+	aborting := echoHarnessTool()
+	aborting.Execute = func(string, any, AgentHarnessToolUpdateCallback, any, AgentHarnessToolInvocation, Context) (*agent.AgentToolResult, error) {
+		panic(&AbortRequested{})
+	}
+	preparedAbort, _ := PrepareToolCall(call, []*AgentHarnessTool{aborting})
+	clearedAbort, _ := ApplyBeforeToolDecision(preparedAbort, nil)
+	sawAbort := false
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				_, sawAbort = r.(*AbortRequested)
+			}
+		}()
+		_, _ = ExecuteToolCall(clearedAbort, gate, nil, nil, nil, BackgroundContext)
+	}()
+	if !sawAbort {
+		t.Fatal("AbortRequested swallowed inside ExecuteToolCall")
+	}
 }
 
 func TestToolResultMessageRoundTrip(t *testing.T) {

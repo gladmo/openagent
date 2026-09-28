@@ -106,6 +106,25 @@ func ResolveFetch(options *StreamOptions) FetchFunction {
 	return DefaultFetch
 }
 
+// transportError wraps fetch-layer failures (connection refused, DNS,
+// reset, mid-body read errors) as a status-0 *ProviderHTTPError so the
+// SDK-parity retry policy classifies them retryable — the role
+// APIConnectionError plays in the pinned TS SDKs. Abort errors and already
+// classified provider errors pass through untouched: cancellation is never
+// retried.
+func transportError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if _, isAbort := err.(*abort.Error); isAbort {
+		return err
+	}
+	if _, isHTTP := err.(*ProviderHTTPError); isHTTP {
+		return err
+	}
+	return &ProviderHTTPError{Status: 0, Message: err.Error()}
+}
+
 // PostJSON sends a JSON POST through the fetch seam and validates the status.
 // The response body is fully read; on non-2xx the error is a
 // *ProviderHTTPError carrying status/headers/body.
@@ -126,7 +145,7 @@ func PostJSON(url string, headers map[string]string, payload []byte, options *St
 	}
 	response, err := ResolveFetch(options)(request)
 	if err != nil {
-		return nil, err
+		return nil, transportError(err)
 	}
 	defer func() {
 		if closer, ok := response.Body.(io.Closer); ok {
@@ -138,7 +157,7 @@ func PostJSON(url string, headers map[string]string, payload []byte, options *St
 		if options != nil && options.Signal != nil && options.Signal.Aborted() {
 			return nil, abort.NewAbortError("Request aborted")
 		}
-		return nil, readErr
+		return nil, transportError(readErr)
 	}
 	if response.Status < 200 || response.Status >= 300 {
 		return nil, &ProviderHTTPError{
@@ -187,7 +206,7 @@ func PostJSONStream(url string, headers map[string]string, payload []byte, optio
 	}
 	response, err := ResolveFetch(options)(request)
 	if err != nil {
-		return nil, err
+		return nil, transportError(err)
 	}
 	if response.Status < 200 || response.Status >= 300 {
 		body, _ := io.ReadAll(response.Body)

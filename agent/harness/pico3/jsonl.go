@@ -42,15 +42,17 @@ type jsonlWriteJSON struct {
 	OpsJSON      []any          `json:"-"`
 }
 
-// TaskPatchJSON is the serialized patch.
+// TaskPatchJSON is the serialized patch. Checkpoint keeps the wire
+// tri-state explicit: absent (untouched) vs null (clear) vs object (set).
 type TaskPatchJSON struct {
-	ID                Id      `json:"id"`
-	Status            *string `json:"status,omitempty"`
-	Checkpoint        any     `json:"checkpoint,omitempty"`
-	Abort             *bool   `json:"abort,omitempty"`
-	Outcome           any     `json:"outcome,omitempty"`
-	Owns              []Id    `json:"owns,omitempty"`
-	hasNullCheckpoint bool
+	ID                Id
+	Status            *string
+	Checkpoint        JsonObject
+	HasCheckpointNull bool
+	Abort             *bool
+	Outcome           JsonObject
+	HasOutcome        bool
+	Owns              []Id
 }
 
 // DocRefJSON is the serialized doc ref.
@@ -635,12 +637,13 @@ func writesToJSON(writes []Write) []jsonlWriteJSON {
 func patchToJSON(p *TaskPatch) *TaskPatchJSON {
 	out := &TaskPatchJSON{ID: p.ID, Status: p.Status, Abort: p.Abort, Owns: p.Owns}
 	if p.HasCheckpointNull {
-		out.Checkpoint = nil
+		out.HasCheckpointNull = true
 	} else if p.Checkpoint != nil {
 		out.Checkpoint = p.Checkpoint
 	}
 	if p.HasOutcome {
 		out.Outcome = p.Outcome
+		out.HasOutcome = true
 	}
 	return out
 }
@@ -651,16 +654,34 @@ func writesFromJSON(writes []jsonlWriteJSON) ([]Write, error) {
 		write := Write{Type: w.Kind}
 		switch w.Kind {
 		case "conversation":
+			if w.Conversation == nil {
+				return nil, fmt.Errorf("malformed record: conversation write missing payload")
+			}
 			write.Conversation = w.Conversation
 		case "entry":
+			if w.Entry == nil {
+				return nil, fmt.Errorf("malformed record: entry write missing payload")
+			}
 			write.Entry = w.Entry
 		case "task":
+			if w.Task == nil {
+				return nil, fmt.Errorf("malformed record: task write missing payload")
+			}
 			write.Task = w.Task
 		case "task.patch":
+			if w.Patch == nil {
+				return nil, fmt.Errorf("malformed record: task.patch write missing payload")
+			}
 			write.Patch = patchFromJSON(w.Patch)
 		case "input":
+			if w.Input == nil {
+				return nil, fmt.Errorf("malformed record: input write missing payload")
+			}
 			write.Input = w.Input
 		case "doc":
+			if w.DocRef == nil {
+				return nil, fmt.Errorf("malformed record: doc write missing ref")
+			}
 			ref := &DocRef{Doc: w.DocRef.Doc, ConversationID: w.DocRef.ConversationID}
 			write.Ref = ref
 			for _, item := range w.OpsJSON {
@@ -679,29 +700,17 @@ func writesFromJSON(writes []jsonlWriteJSON) ([]Write, error) {
 }
 
 func patchFromJSON(p *TaskPatchJSON) *TaskPatch {
-	if p == nil {
-		return nil
-	}
+	// checkpoint: absent leaves the patch untouched; explicit null clears;
+	// object sets.
 	out := &TaskPatch{ID: p.ID, Status: p.Status, Abort: p.Abort, Owns: p.Owns}
-	// checkpoint: explicit null clears; object sets; absent untouched.
-	if p.Checkpoint == nil {
+	if p.HasCheckpointNull {
 		out.HasCheckpointNull = true
-	} else if obj, ok := p.Checkpoint.(map[string]any); ok {
-		checkpoint := NewObject()
-		for k, v := range obj {
-			checkpoint.Set(k, v)
-		}
-		out.Checkpoint = checkpoint
+	} else if p.Checkpoint != nil {
+		out.Checkpoint = p.Checkpoint
 	}
-	if p.Outcome != nil {
-		if obj, ok := p.Outcome.(map[string]any); ok {
-			outcome := NewObject()
-			for k, v := range obj {
-				outcome.Set(k, v)
-			}
-			out.Outcome = outcome
-			out.HasOutcome = true
-		}
+	if p.HasOutcome && p.Outcome != nil {
+		out.Outcome = p.Outcome
+		out.HasOutcome = true
 	}
 	return out
 }
@@ -738,7 +747,7 @@ func patchCarrierToJSON(p *TaskPatchJSON) *jsonx.Obj {
 	if p.Status != nil {
 		obj.Set("status", *p.Status)
 	}
-	if p.hasNullCheckpoint {
+	if p.HasCheckpointNull {
 		obj.Set("checkpoint", nil)
 	} else if p.Checkpoint != nil {
 		obj.Set("checkpoint", p.Checkpoint)
@@ -764,7 +773,7 @@ func writeCarrierToJSON(w *jsonlWriteJSON) *jsonxObjPtr {
 	obj.Set("type", w.Kind)
 	switch w.Kind {
 	case "conversation":
-		obj.Set("conversation", valueToJSON(w.Conversation))
+		obj.Set("conversation", conversationCarrierToJSON(w.Conversation))
 	case "entry":
 		obj.Set("entry", entryCarrierToJSON(w.Entry))
 	case "task":
@@ -820,7 +829,7 @@ func recordFromJSONString(line string) (jsonlRecord, error) {
 			for _, item := range arr {
 				writeObj, ok := item.(*jsonxObjPtr)
 				if !ok {
-					continue
+					return jsonlRecord{}, fmt.Errorf("malformed record: write entry is not an object")
 				}
 				record.Writes = append(record.Writes, writeCarrierFromJSON(writeObj))
 			}
@@ -829,6 +838,9 @@ func recordFromJSONString(line string) (jsonlRecord, error) {
 	return record, nil
 }
 
+// writeCarrierFromJSON decodes through the jsonx model field by field:
+// encoding/json cannot populate jsonx-typed carrier fields (their state is
+// unexported), so a round trip through it silently yields empty objects.
 func writeCarrierFromJSON(obj *jsonxObjPtr) jsonlWriteJSON {
 	var w jsonlWriteJSON
 	if v, ok := obj.Get("type"); ok {
@@ -839,15 +851,21 @@ func writeCarrierFromJSON(obj *jsonxObjPtr) jsonlWriteJSON {
 	switch w.Kind {
 	case "conversation":
 		if v, ok := obj.Get("conversation"); ok {
-			w.Conversation = jsonDecodeInto(v, &Conversation{}).(*Conversation)
+			if carrier, ok := v.(*jsonxObjPtr); ok {
+				w.Conversation = conversationCarrierFromJSON(carrier)
+			}
 		}
 	case "entry":
 		if v, ok := obj.Get("entry"); ok {
-			w.Entry = jsonDecodeInto(v, &Entry{}).(*Entry)
+			if carrier, ok := v.(*jsonxObjPtr); ok {
+				w.Entry = entryCarrierFromJSON(carrier)
+			}
 		}
 	case "task":
 		if v, ok := obj.Get("task"); ok {
-			w.Task = jsonDecodeInto(v, &Task{}).(*Task)
+			if carrier, ok := v.(*jsonxObjPtr); ok {
+				w.Task = taskCarrierFromJSON(carrier)
+			}
 		}
 	case "task.patch":
 		if v, ok := obj.Get("patch"); ok {
@@ -900,8 +918,7 @@ func patchCarrierFromJSON(obj *jsonxObjPtr) *TaskPatchJSON {
 	checkpoint, hasCheckpoint := obj.Get("checkpoint")
 	if hasCheckpoint {
 		if checkpoint == nil {
-			patch.Checkpoint = nil
-			patch.hasNullCheckpoint = true
+			patch.HasCheckpointNull = true
 		} else if checkpointObj, ok := checkpoint.(*jsonxObjPtr); ok {
 			patch.Checkpoint = checkpointObj
 		}
@@ -982,4 +999,188 @@ func entryCarrierToJSON(e *Entry) *jsonx.Obj {
 		obj.Set("byTaskId", float64(*e.ByTaskID))
 	}
 	return obj
+}
+
+// entryCarrierFromJSON mirrors entryCarrierToJSON; Model elements keep
+// their jsonx representation (*jsonx.Obj role messages, not decoded maps).
+func entryCarrierFromJSON(obj *jsonxObjPtr) *Entry {
+	e := &Entry{}
+	if v, ok := carrierFloat(obj, "id"); ok {
+		e.ID = int64(v)
+	}
+	if v, ok := carrierFloat(obj, "conversationId"); ok {
+		e.ConversationID = int64(v)
+	}
+	if v, ok := obj.Get("kind"); ok {
+		if s, ok := v.(string); ok {
+			e.Kind = s
+		}
+	}
+	if v, ok := obj.Get("model"); ok {
+		if arr, ok := v.([]any); ok {
+			e.Model = arr
+		}
+	}
+	if v, ok := obj.Get("data"); ok {
+		if data, ok := v.(*jsonxObjPtr); ok {
+			e.Data = data
+		}
+	}
+	if v, ok := carrierFloat(obj, "head"); ok {
+		head := Id(int64(v))
+		e.Head = &head
+	}
+	if v, ok := carrierFloat(obj, "byTaskId"); ok {
+		byTask := Id(int64(v))
+		e.ByTaskID = &byTask
+	}
+	return e
+}
+
+// taskCarrierFromJSON mirrors taskCarrierToJSON.
+func taskCarrierFromJSON(obj *jsonxObjPtr) *Task {
+	t := &Task{}
+	if v, ok := carrierFloat(obj, "id"); ok {
+		t.ID = int64(v)
+	}
+	if v, ok := carrierFloat(obj, "conversationId"); ok {
+		t.ConversationID = int64(v)
+	}
+	if v, ok := obj.Get("kind"); ok {
+		if s, ok := v.(string); ok {
+			t.Kind = s
+		}
+	}
+	if v, ok := obj.Get("input"); ok {
+		t.Input = v
+	}
+	if v, ok := obj.Get("status"); ok {
+		if s, ok := v.(string); ok {
+			t.Status = s
+		}
+	}
+	if v, ok := obj.Get("checkpoint"); ok {
+		if checkpoint, ok := v.(*jsonxObjPtr); ok {
+			t.Checkpoint = checkpoint
+		}
+	}
+	if v, ok := obj.Get("abort"); ok {
+		if b, ok := v.(bool); ok {
+			t.Abort = b
+		}
+	}
+	if v, ok := obj.Get("outcome"); ok {
+		if outcome, ok := v.(*jsonxObjPtr); ok {
+			t.Outcome = outcome
+		}
+	}
+	if v, ok := obj.Get("after"); ok {
+		if arr, ok := v.([]any); ok {
+			for _, item := range arr {
+				if f, ok := item.(float64); ok {
+					t.After = append(t.After, Id(int64(f)))
+				}
+			}
+		}
+	}
+	if v, ok := obj.Get("owns"); ok {
+		if arr, ok := v.([]any); ok {
+			for _, item := range arr {
+				if f, ok := item.(float64); ok {
+					t.Owns = append(t.Owns, Id(int64(f)))
+				}
+			}
+		}
+	}
+	if v, ok := obj.Get("background"); ok {
+		if b, ok := v.(bool); ok {
+			t.Background = b
+		}
+	}
+	return t
+}
+
+// conversationCarrierToJSON keeps SectionSeedRef.Data in the jsonx model —
+// encoding/json would serialize *jsonx.Obj as {}.
+func conversationCarrierToJSON(c *Conversation) *jsonx.Obj {
+	obj := jsonxNewObj()
+	obj.Set("id", float64(c.ID))
+	if c.Parent != nil {
+		parent := jsonxNewObj()
+		parent.Set("conversationId", float64(c.Parent.ConversationId))
+		parent.Set("at", float64(c.Parent.At))
+		obj.Set("parent", parent)
+	}
+	if c.Owner != nil {
+		obj.Set("owner", float64(*c.Owner))
+	}
+	if c.Sections != nil {
+		sections := make([]any, 0, len(c.Sections))
+		for _, section := range c.Sections {
+			seed := jsonxNewObj()
+			seed.Set("kind", section.Kind)
+			if section.Data != nil {
+				seed.Set("data", section.Data)
+			}
+			sections = append(sections, seed)
+		}
+		obj.Set("sections", sections)
+	}
+	return obj
+}
+
+// conversationCarrierFromJSON mirrors conversationCarrierToJSON.
+func conversationCarrierFromJSON(obj *jsonxObjPtr) *Conversation {
+	c := &Conversation{}
+	if v, ok := carrierFloat(obj, "id"); ok {
+		c.ID = int64(v)
+	}
+	if v, ok := obj.Get("parent"); ok {
+		if parent, ok := v.(*jsonxObjPtr); ok {
+			ref := &ConversationRef{}
+			if f, ok := carrierFloat(parent, "conversationId"); ok {
+				ref.ConversationId = int64(f)
+			}
+			if f, ok := carrierFloat(parent, "at"); ok {
+				ref.At = int64(f)
+			}
+			c.Parent = ref
+		}
+	}
+	if v, ok := obj.Get("owner"); ok {
+		if f, ok := v.(float64); ok {
+			owner := Id(int64(f))
+			c.Owner = &owner
+		}
+	}
+	if v, ok := obj.Get("sections"); ok {
+		if arr, ok := v.([]any); ok {
+			for _, item := range arr {
+				seedObj, ok := item.(*jsonxObjPtr)
+				if !ok {
+					continue
+				}
+				seed := SectionSeedRef{}
+				if k, ok := seedObj.Get("kind"); ok {
+					if s, ok := k.(string); ok {
+						seed.Kind = s
+					}
+				}
+				if d, ok := seedObj.Get("data"); ok {
+					seed.Data = d
+				}
+				c.Sections = append(c.Sections, seed)
+			}
+		}
+	}
+	return c
+}
+
+func carrierFloat(obj *jsonxObjPtr, key string) (float64, bool) {
+	v, ok := obj.Get(key)
+	if !ok {
+		return 0, false
+	}
+	f, ok := v.(float64)
+	return f, ok
 }

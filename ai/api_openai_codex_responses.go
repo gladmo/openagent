@@ -574,7 +574,7 @@ func (a *OpenAICodexResponsesAPI) run(
 		if timeoutMs != nil && *timeoutMs > 0 {
 			headerTimer = time.AfterFunc(time.Duration(*timeoutMs*float64(time.Millisecond)), headersTimeoutController.Abort)
 		}
-		combined := abort.Any(signal, headersTimeoutController.Signal())
+		combined, disposeCombined := abort.AnyWithDispose(signal, headersTimeoutController.Signal())
 		fetched, fetchErr := fetchOrDefault(fetch, FetchRequest{
 			URL:     url,
 			Method:  http.MethodPost,
@@ -585,6 +585,9 @@ func (a *OpenAICodexResponsesAPI) run(
 		if headerTimer != nil {
 			headerTimer.Stop()
 		}
+		// Every attempt derives from the caller's long-lived signal;
+		// without disposal the registrations accumulate for the session.
+		disposeCombined()
 		if fetchErr != nil {
 			if headersTimeoutController.Signal().Aborted() && (signal == nil || !signal.Aborted()) {
 				return &csError{msg: "Codex SSE response headers timed out after " + strconv.FormatFloat(*timeoutMs, 'f', -1, 64) + "ms"}

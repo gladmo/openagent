@@ -401,6 +401,8 @@ func operationMetaFromValue(v any) (*session.OperationMeta, error) {
 	return meta, nil
 }
 
+// operationStateFromValue mirrors operationStateToJSON field for field;
+// every key the writer emits is restored here.
 func operationStateFromValue(v any) (*session.OperationState, error) {
 	obj, ok := v.(*jsonx.Obj)
 	if !ok {
@@ -422,14 +424,51 @@ func operationStateFromValue(v any) (*session.OperationState, error) {
 			state.LatestAssistantEntryID = &s
 		}
 	}
+	if continuation, ok := obj.Get("continuation"); ok {
+		if continuationObj, ok := continuation.(*jsonx.Obj); ok {
+			state.Continuation = continuationObj
+		}
+	}
+	state.TriggerEntryID = stringOf(obj, "triggerEntryId")
+	if generation, ok := obj.Get("generationContext"); ok {
+		if generationObj, ok := generation.(*jsonx.Obj); ok {
+			state.GenerationContext = generationObj
+		}
+	}
+	state.Attempt = int64(floatOf(obj, "attempt"))
+	state.NextAttempt = int64(floatOf(obj, "nextAttempt"))
+	state.NotBefore = floatOf(obj, "notBefore")
+	state.ErrorMessage = stringOf(obj, "errorMessage")
+	state.ResponseEntryID = stringOf(obj, "responseEntryId")
+	state.UsageID = stringOf(obj, "usageId")
+	state.IntendedOutputLimit = floatOf(obj, "intendedOutputLimit")
+	state.ContextWindow = floatOf(obj, "contextWindow")
+	if batchValue, ok := obj.Get("batch"); ok {
+		if batch, ok := batchValue.(*jsonx.Obj); ok {
+			state.Batch = batch
+		}
+	}
+	state.StepID = stringOf(obj, "stepId")
+	state.SourceEntryID = stringOf(obj, "sourceEntryId")
+	state.Poll = int64(floatOf(obj, "poll"))
+	if configuration, ok := obj.Get("configuration"); ok {
+		if configurationObj, ok := configuration.(*jsonx.Obj); ok {
+			state.Configuration = configurationObj
+		}
+	}
+	if streamOptions, ok := obj.Get("streamOptions"); ok {
+		if streamOptionsObj, ok := streamOptions.(*jsonx.Obj); ok {
+			state.StreamOptions = streamOptionsObj
+		}
+	}
 	if taskValue, ok := obj.Get("task"); ok {
 		if task, ok := taskValue.(*jsonx.Obj); ok {
 			state.Task = task
 		}
 	}
-	if batchValue, ok := obj.Get("batch"); ok {
-		if batch, ok := batchValue.(*jsonx.Obj); ok {
-			state.Batch = batch
+	if summaryContext, ok := obj.Get("summaryContext"); ok {
+		if summaryObj, ok := summaryContext.(*jsonx.Obj); ok {
+			state.SummaryContext = summaryObj
 		}
 	}
 	if target, ok := obj.Get("targetId"); ok {

@@ -69,6 +69,8 @@ func OperationScopeCopy(scope *session.OperationState) session.OperationState {
 // optionally one followUp when nothing projects, chain entries from the
 // tip, delete consumed pending payloads, advance the tip.
 // projectorSet decides which custom entries project as model context.
+// laneName namespaces the durable branch-tip write (the planner is pure;
+// the lane name arrives per call, never via shared state).
 func PlanBoundaryInbox(
 	inbox []session.InboxItem,
 	steeringMode, followUpMode string,
@@ -76,6 +78,7 @@ func PlanBoundaryInbox(
 	tipID *string,
 	followUpWhenNoTrigger bool,
 	projectorSet map[string]bool,
+	laneName string,
 	ctx contextContextAlias,
 ) (*BoundaryPlacement, error) {
 	steer := filterKind(inbox, "steer")
@@ -192,7 +195,7 @@ func PlanBoundaryInbox(
 	}
 	if len(entries) > 0 && parentID != nil {
 		writes = append(writes, session.WriteFromValue(session.SetValue(
-			session.BranchTip(laneNameHolder), *parentID,
+			session.BranchTip(laneName), *parentID,
 		)))
 	}
 
@@ -216,12 +219,8 @@ func PlanBoundaryInbox(
 	}, nil
 }
 
-// laneNameHolder carries the branch name for tip writes; set by the facade
-// wrapper that knows the lane name (per-call; see WithLaneName).
-var laneNameHolder string
-
-// SetLaneName installs the branch-tip write namespace target.
-func SetLaneName(name string) { laneNameHolder = name }
+// laneNameHolder carried the branch-tip write namespace as package state;
+// it raced cross-lane commits and was replaced by the laneName parameter.
 
 type pendingPayload struct {
 	item    session.InboxItem

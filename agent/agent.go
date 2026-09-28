@@ -130,6 +130,10 @@ type activeRun struct {
 // Agent is the stateful wrapper around the low-level agent loop.
 type Agent struct {
 	mu sync.Mutex
+	// emitMu serializes event dispatch (state reduction + listener
+	// invocation). Parallel tool goroutines emit concurrently; listeners
+	// are promised sequential, subscription-order invocation.
+	emitMu sync.Mutex
 
 	// State (guarded).
 	tools            []*AgentTool
@@ -686,8 +690,11 @@ func (a *Agent) handleRunFailure(err error, aborted bool) {
 
 // processEvents reduces internal state for a loop event, then invokes
 // listeners sequentially in subscription order. Listener failures propagate
-// (TS awaits would reject the loop).
+// (TS awaits would reject the loop). The whole dispatch is serialized:
+// parallel tool executions emit from multiple goroutines.
 func (a *Agent) processEvents(event AgentEvent) {
+	a.emitMu.Lock()
+	defer a.emitMu.Unlock()
 	a.mu.Lock()
 	switch e := event.(type) {
 	case *EventMessageStart:

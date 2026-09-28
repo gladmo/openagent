@@ -550,13 +550,12 @@ func (e *NodeExecutionEnv) Exec(command string, options *harness.ShellExecOption
 	cmd.Stderr = cmd.Stdout // combined
 
 	capture := newExecCapture(captureOptions, onUpdate, ctx)
-	if cmd.Process != nil {
-		e.trackPID(cmd.Process.Pid)
-	}
 	if err := cmd.Start(); err != nil {
 		return harness.Err[harness.ShellExecResult, *harness.ExecutionError](
 			harness.NewExecutionError(harness.ExecErrSpawnError, err.Error()))
 	}
+	// cmd.Process exists only after a successful Start.
+	e.trackPID(cmd.Process.Pid)
 
 	done := make(chan error, 1)
 	go func() {
@@ -575,10 +574,15 @@ func (e *NodeExecutionEnv) Exec(command string, options *harness.ShellExecOption
 	}()
 
 	var timer *time.Timer
-	var timeoutFired bool
+	// Buffered signal so the timer goroutine never blocks; a receive below
+	// carries the happens-before edge the bare bool write lacked.
+	timeoutFired := make(chan struct{}, 1)
 	if hasTimeout {
 		timer = time.AfterFunc(time.Duration(timeoutMS)*time.Millisecond, func() {
-			timeoutFired = true
+			select {
+			case timeoutFired <- struct{}{}:
+			default:
+			}
 			if cmd.Process != nil {
 				killProcessTree(cmd.Process.Pid)
 			}
@@ -601,9 +605,11 @@ func (e *NodeExecutionEnv) Exec(command string, options *harness.ShellExecOption
 		return harness.Err[harness.ShellExecResult, *harness.ExecutionError](
 			harness.NewExecutionError(harness.ExecErrAborted, "aborted"))
 	}
-	if timeoutFired {
+	select {
+	case <-timeoutFired:
 		return harness.Err[harness.ShellExecResult, *harness.ExecutionError](
 			harness.NewExecutionError(harness.ExecErrTimeout, "Command timed out"))
+	default:
 	}
 
 	exitCode := int64(0)

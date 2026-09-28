@@ -37,7 +37,6 @@ func (e *boundaryEnv) seedPending(t *testing.T, entryID string, payload string) 
 func TestPlanBoundaryInboxSteerSelection(t *testing.T) {
 	env := newBoundaryEnv(t)
 	ctx := harnessBackground()
-	SetLaneName("main")
 
 	// Two steers + one write in the inbox.
 	first := env.seedPending(t, "s1", `{"type":"message","payload":{"role":"user","content":"one"}}`)
@@ -50,7 +49,7 @@ func TestPlanBoundaryInboxSteerSelection(t *testing.T) {
 	tip := "tip-1"
 
 	// one-at-a-time: first steer + write.
-	placement, err := PlanBoundaryInbox(inbox, "one-at-a-time", "one-at-a-time", env.sess, &tip, false, map[string]bool{"file.write": false}, ctx)
+	placement, err := PlanBoundaryInbox(inbox, "one-at-a-time", "one-at-a-time", env.sess, &tip, false, map[string]bool{"file.write": false}, "main", ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +77,7 @@ func TestPlanBoundaryInboxSteerSelection(t *testing.T) {
 	}
 
 	// all-mode: both steers selected.
-	placement, err = PlanBoundaryInbox(inbox, "all", "all", env.sess, &tip, false, map[string]bool{"file.write": false}, ctx)
+	placement, err = PlanBoundaryInbox(inbox, "all", "all", env.sess, &tip, false, map[string]bool{"file.write": false}, "main", ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +92,6 @@ func TestPlanBoundaryInboxSteerSelection(t *testing.T) {
 func TestPlanBoundaryInboxFollowUpWhenNoTrigger(t *testing.T) {
 	env := newBoundaryEnv(t)
 	ctx := harnessBackground()
-	SetLaneName("main")
 
 	// Only a write (does not project) at the boundary.
 	write := session.InboxItem{EntryID: "w1", Kind: "write"}
@@ -104,7 +102,7 @@ func TestPlanBoundaryInboxFollowUpWhenNoTrigger(t *testing.T) {
 	tip := "tip-1"
 
 	// followUpWhenNoTrigger=false: only the write, no trigger.
-	placement, err := PlanBoundaryInbox(inbox, "one-at-a-time", "one-at-a-time", env.sess, &tip, false, map[string]bool{}, ctx)
+	placement, err := PlanBoundaryInbox(inbox, "one-at-a-time", "one-at-a-time", env.sess, &tip, false, map[string]bool{}, "main", ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +111,7 @@ func TestPlanBoundaryInboxFollowUpWhenNoTrigger(t *testing.T) {
 	}
 
 	// followUpWhenNoTrigger=true: the followUp joins and triggers.
-	placement, err = PlanBoundaryInbox(inbox, "one-at-a-time", "one-at-a-time", env.sess, &tip, true, map[string]bool{}, ctx)
+	placement, err = PlanBoundaryInbox(inbox, "one-at-a-time", "one-at-a-time", env.sess, &tip, true, map[string]bool{}, "main", ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,13 +131,12 @@ func TestPlanBoundaryInboxFollowUpWhenNoTrigger(t *testing.T) {
 func TestPlanBoundaryInboxProjectorCustomTypes(t *testing.T) {
 	env := newBoundaryEnv(t)
 	ctx := harnessBackground()
-	SetLaneName("main")
 	write := session.InboxItem{EntryID: "w1", Kind: "write"}
 	env.seedPending(t, "w1", `{"type":"custom","customType":"app.note","payload":{"note":"x"}}`)
 	tip := "tip-1"
 
 	// Unknown custom type does not project.
-	placement, err := PlanBoundaryInbox([]session.InboxItem{write}, "all", "all", env.sess, &tip, true, map[string]bool{}, ctx)
+	placement, err := PlanBoundaryInbox([]session.InboxItem{write}, "all", "all", env.sess, &tip, true, map[string]bool{}, "main", ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +144,7 @@ func TestPlanBoundaryInboxProjectorCustomTypes(t *testing.T) {
 		t.Fatal("unknown custom type projected")
 	}
 	// Registered projector projects and triggers.
-	placement, err = PlanBoundaryInbox([]session.InboxItem{write}, "all", "all", env.sess, &tip, true, map[string]bool{"app.note": true}, ctx)
+	placement, err = PlanBoundaryInbox([]session.InboxItem{write}, "all", "all", env.sess, &tip, true, map[string]bool{"app.note": true}, "main", ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +158,7 @@ func TestPlanBoundaryInboxMissingPayloadInvariant(t *testing.T) {
 	ctx := harnessBackground()
 	ghost := session.InboxItem{EntryID: "ghost", Kind: "steer"}
 	tip := "tip-1"
-	if _, err := PlanBoundaryInbox([]session.InboxItem{ghost}, "all", "all", env.sess, &tip, false, nil, ctx); err == nil {
+	if _, err := PlanBoundaryInbox([]session.InboxItem{ghost}, "all", "all", env.sess, &tip, false, nil, "main", ctx); err == nil {
 		t.Fatal("missing payload accepted")
 	}
 }
@@ -173,7 +170,7 @@ func TestPlanBoundaryInboxNonMessageSteerInvariant(t *testing.T) {
 	item := session.InboxItem{EntryID: "bad", Kind: "steer"}
 	env.seedPending(t, "bad", `{"type":"custom","customType":"x"}`)
 	tip := "tip-1"
-	if _, err := PlanBoundaryInbox([]session.InboxItem{item}, "all", "all", env.sess, &tip, false, nil, ctx); err == nil {
+	if _, err := PlanBoundaryInbox([]session.InboxItem{item}, "all", "all", env.sess, &tip, false, nil, "main", ctx); err == nil {
 		t.Fatal("custom steer accepted")
 	}
 }
@@ -182,7 +179,7 @@ func TestPlanBoundaryInboxEmpty(t *testing.T) {
 	env := newBoundaryEnv(t)
 	ctx := harnessBackground()
 	tip := "tip-1"
-	placement, err := PlanBoundaryInbox(nil, "all", "all", env.sess, &tip, true, nil, ctx)
+	placement, err := PlanBoundaryInbox(nil, "all", "all", env.sess, &tip, true, nil, "main", ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

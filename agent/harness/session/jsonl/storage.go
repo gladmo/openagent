@@ -159,11 +159,14 @@ func (s *JsonlStorage) replayCommitted(writes []session.CommittedWrite) {
 	s.storageState.ApplyValidated(writes)
 }
 
-func (s *JsonlStorage) enqueue(job func()) {
+// enqueue starts the worker on first use and hands it the job. The send
+// happens under mu so it can never race Close's close(queue); a closed
+// storage reports an error instead of panicking.
+func (s *JsonlStorage) enqueue(job func()) error {
 	s.mu.Lock()
 	if s.status != "open" {
 		s.mu.Unlock()
-		panic("JsonlStorage is closed")
+		return fmt.Errorf("JsonlStorage is closed")
 	}
 	if !s.started {
 		s.queue = make(chan func(), 1024)
@@ -174,9 +177,9 @@ func (s *JsonlStorage) enqueue(job func()) {
 			}
 		}(s.queue)
 	}
-	queue := s.queue
+	s.queue <- job
 	s.mu.Unlock()
-	queue <- job
+	return nil
 }
 
 // Commit serializes one transaction; append-before-apply.
@@ -184,17 +187,22 @@ func (s *JsonlStorage) Commit(writes []session.Write, ctx harness.Context) (sess
 	done := make(chan struct{})
 	var result session.CommitResult
 	var err error
-	s.enqueue(func() {
+	if enqueueErr := s.enqueue(func() {
 		result, err = s.applyCommit(writes, ctx)
 		close(done)
-	})
+	}); enqueueErr != nil {
+		return session.CommitResult{}, enqueueErr
+	}
 	<-done
 	return result, err
 }
 
 func (s *JsonlStorage) applyCommit(writes []session.Write, ctx harness.Context) (session.CommitResult, error) {
-	if s.backing.kind == "v3" && len(writes) != 0 {
-		return s.upgradeLegacyV3ToV4(s.backing.source, writes, ctx)
+	s.mu.Lock()
+	backing := s.backing
+	s.mu.Unlock()
+	if backing.kind == "v3" && len(writes) != 0 {
+		return s.upgradeLegacyV3ToV4(backing.source, writes, ctx)
 	}
 	prepared, err := s.storageState.PrepareCommit(writes, s.now())
 	if err != nil {
@@ -243,7 +251,9 @@ func (s *JsonlStorage) upgradeLegacyV3ToV4(source *LegacyV3Source, callerWrites 
 		return session.CommitResult{}, err
 	}
 	stats := s.storageState.ApplyValidated(prepared.Writes)
+	s.mu.Lock()
 	s.backing = jsonlBacking{kind: "v4"}
+	s.mu.Unlock()
 	// First sequence belongs to the internal usage adjustment.
 	return session.CommitResult{
 		FirstSeq:  prepared.FirstSeq + 1,
@@ -254,6 +264,8 @@ func (s *JsonlStorage) upgradeLegacyV3ToV4(source *LegacyV3Source, callerWrites 
 }
 
 func (s *JsonlStorage) assertOpen() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.status != "open" {
 		return fmt.Errorf("JsonlStorage is closed")
 	}
@@ -324,15 +336,22 @@ func (s *JsonlStorage) GetStats(_ harness.Context) (session.SessionStats, error)
 }
 
 func (s *JsonlStorage) withImportedUsage(stats session.SessionStats) session.SessionStats {
-	if s.backing.kind == "v4" {
+	s.mu.Lock()
+	backing := s.backing
+	s.mu.Unlock()
+	if backing.kind == "v4" {
 		return stats
 	}
-	stats.Usage = s.backing.source.ImportedUsage
+	stats.Usage = backing.source.ImportedUsage
 	return stats
 }
 
 // IsLegacyV3 reports the backing kind.
-func (s *JsonlStorage) IsLegacyV3() bool { return s.backing.kind == "v3" }
+func (s *JsonlStorage) IsLegacyV3() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.backing.kind == "v3"
+}
 
 // CaptureForkNextSeq reserves a boundary slot in the queue.
 func (s *JsonlStorage) CaptureForkNextSeq(_ harness.Context) (int64, error) {
@@ -341,35 +360,40 @@ func (s *JsonlStorage) CaptureForkNextSeq(_ harness.Context) (int64, error) {
 	}
 	done := make(chan struct{})
 	var next int64
-	s.enqueue(func() {
+	if enqueueErr := s.enqueue(func() {
 		next = s.storageState.GetNextSeq()
 		close(done)
-	})
+	}); enqueueErr != nil {
+		return 0, enqueueErr
+	}
 	<-done
 	return next, nil
 }
 
-// Close drains the queue.
+// Close drains the queue, stops the worker, and rejects later enqueues.
+// The sentinel send and the close(queue) both happen under mu, so no
+// in-flight enqueue can send on the closed channel.
 func (s *JsonlStorage) Close(_ harness.Context) error {
 	s.closeOnce.Do(func() {
 		s.mu.Lock()
 		s.status = "closing"
+		queue := s.queue
 		s.mu.Unlock()
-		if s.started {
+		if queue != nil {
 			sentinel := make(chan struct{})
-			s.queue <- func() { close(sentinel) }
+			s.mu.Lock()
+			queue <- func() { close(sentinel) }
+			s.mu.Unlock()
 			<-sentinel
 			s.mu.Lock()
-			close(s.queue)
+			close(queue)
+			s.status = "closed"
 			s.mu.Unlock()
 		} else {
 			s.mu.Lock()
 			s.status = "closed"
 			s.mu.Unlock()
 		}
-		s.mu.Lock()
-		s.status = "closed"
-		s.mu.Unlock()
 		close(s.closed)
 	})
 	<-s.closed

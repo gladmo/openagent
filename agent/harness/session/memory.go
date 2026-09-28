@@ -32,11 +32,14 @@ func NewMemoryStorage() *MemoryStorage {
 	}
 }
 
-func (m *MemoryStorage) enqueue(job func()) {
+// enqueue starts the worker on first use and hands it the job. The send
+// happens under mu so it can never race Close's close(queue); a closed
+// storage reports an error instead of panicking.
+func (m *MemoryStorage) enqueue(job func()) error {
 	m.mu.Lock()
 	if m.status != "open" {
 		m.mu.Unlock()
-		panic("MemoryStorage is closed")
+		return fmt.Errorf("MemoryStorage is closed")
 	}
 	if !m.started {
 		m.queue = make(chan func(), 1024)
@@ -47,9 +50,9 @@ func (m *MemoryStorage) enqueue(job func()) {
 			}
 		}(m.queue)
 	}
-	queue := m.queue
+	m.queue <- job
 	m.mu.Unlock()
-	queue <- job
+	return nil
 }
 
 // Commit serializes one transaction through the commit queue.
@@ -57,7 +60,7 @@ func (m *MemoryStorage) Commit(writes []Write, _ Context) (CommitResult, error) 
 	done := make(chan struct{})
 	var result CommitResult
 	var err error
-	m.enqueue(func() {
+	if enqueueErr := m.enqueue(func() {
 		prepared, prepareErr := m.state.PrepareCommit(writes, m.nowFn())
 		if prepareErr != nil {
 			err = prepareErr
@@ -66,7 +69,9 @@ func (m *MemoryStorage) Commit(writes []Write, _ Context) (CommitResult, error) 
 			result = CommitResult{FirstSeq: prepared.FirstSeq, Seqs: prepared.Seqs, Timestamp: prepared.Timestamp, Stats: stats}
 		}
 		close(done)
-	})
+	}); enqueueErr != nil {
+		return CommitResult{}, enqueueErr
+	}
 	<-done
 	return result, err
 }
@@ -143,7 +148,7 @@ func (m *MemoryStorage) Fork(options ForkOptions) (*MemoryStorage, error) {
 	done := make(chan struct{})
 	var destination *MemoryStorage
 	var err error
-	m.enqueue(func() {
+	if enqueueErr := m.enqueue(func() {
 		forkState, forkErr := m.state.CreateFork(options)
 		if forkErr != nil {
 			err = forkErr
@@ -153,28 +158,37 @@ func (m *MemoryStorage) Fork(options ForkOptions) (*MemoryStorage, error) {
 			destination = next
 		}
 		close(done)
-	})
+	}); enqueueErr != nil {
+		return nil, enqueueErr
+	}
 	<-done
 	return destination, err
 }
 
+// Close drains the queue, stops the worker, and rejects later enqueues.
+// The sentinel send and the close(queue) both happen under mu, so no
+// in-flight enqueue can send on the closed channel.
 func (m *MemoryStorage) Close(Context) error {
 	m.closeMtx.Do(func() {
 		m.mu.Lock()
 		m.status = "closing"
+		queue := m.queue
 		m.mu.Unlock()
-		// Drain the queue by enqueueing a sentinel after current work.
-		if m.started {
+		if queue != nil {
 			sentinel := make(chan struct{})
-			m.queue <- func() { close(sentinel) }
+			m.mu.Lock()
+			queue <- func() { close(sentinel) }
+			m.mu.Unlock()
 			<-sentinel
+			m.mu.Lock()
+			close(queue)
+			m.status = "closed"
+			m.mu.Unlock()
+		} else {
+			m.mu.Lock()
+			m.status = "closed"
+			m.mu.Unlock()
 		}
-		m.mu.Lock()
-		m.status = "closed"
-		if m.started {
-			close(m.queue)
-		}
-		m.mu.Unlock()
 		close(m.closed)
 	})
 	<-m.closed
@@ -182,6 +196,8 @@ func (m *MemoryStorage) Close(Context) error {
 }
 
 func (m *MemoryStorage) assertOpen() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.status != "open" {
 		return fmt.Errorf("MemoryStorage is closed")
 	}
@@ -280,7 +296,11 @@ func (r *MemorySessionRepo) Open(metadata SessionMetadata, ctx Context) (Session
 		delete(r.admitted, metadata.ID)
 		r.mu.Unlock()
 	}
+	// Reopen over the recorded materialized state: the previous storage was
+	// closed with its session, but the state survives as data and is the
+	// repo's record of the session's contents (Fork reads it too).
 	storage := NewMemoryStorage()
+	storage.state = record.storage.state
 	session := NewStorageBackedSession(record.metadata, storage, StorageBackedSessionOptions{OnClose: func() {
 		release()
 		r.mu.Lock()

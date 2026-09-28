@@ -78,6 +78,8 @@ func NewInMemoryStorageState() *InMemoryStorageState {
 // PrepareCommit validates and prepares a commit at the current high-water
 // mark.
 func (s *InMemoryStorageState) PrepareCommit(writes []Write, timestamp float64) (PreparedCommit, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	prepared := PrepareStorageCommit(writes, s.nextSeq, timestamp)
 	if err := s.validateCommitted(prepared.Writes); err != nil {
 		return PreparedCommit{}, err
@@ -85,6 +87,7 @@ func (s *InMemoryStorageState) PrepareCommit(writes []Write, timestamp float64) 
 	return prepared, nil
 }
 
+// validateCommitted requires s.mu (read or write).
 func (s *InMemoryStorageState) validateCommitted(writes []CommittedWrite) error {
 	state := &memoryValidationState{s}
 	return ValidateCommittedWrites(writes, s.nextSeq, state)
@@ -105,6 +108,13 @@ func (m *memoryValidationState) HasEntryID(id string) bool {
 // ApplyValidated applies writes accepted by validateCommitted and returns
 // the post-apply totals.
 func (s *InMemoryStorageState) ApplyValidated(writes []CommittedWrite) SessionStats {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.applyValidatedLocked(writes)
+}
+
+// applyValidatedLocked requires s.mu (write).
+func (s *InMemoryStorageState) applyValidatedLocked(writes []CommittedWrite) SessionStats {
 	for i := range writes {
 		write := &writes[i]
 		switch write.Kind {
@@ -141,6 +151,14 @@ func (s *InMemoryStorageState) ApplyValidated(writes []CommittedWrite) SessionSt
 
 // CreateFork builds the destination state per the fork plan.
 func (s *InMemoryStorageState) CreateFork(options ForkOptions) (*InMemoryStorageState, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.createForkLocked(options)
+}
+
+// createForkLocked requires s.mu (read); it only reads s and writes the
+// freshly built destination.
+func (s *InMemoryStorageState) createForkLocked(options ForkOptions) (*InMemoryStorageState, error) {
 	plan, err := s.selectForkPlan(options)
 	if err != nil {
 		return nil, err
@@ -192,15 +210,13 @@ func (p memoryForkPlan) view() ForkCurrentStatePlan {
 	return ForkCurrentStatePlan{Scope: p.scope, Branch: p.branch, DestinationTip: p.destinationTip}
 }
 
+// selectForkPlan requires s.mu (read).
 func (s *InMemoryStorageState) selectForkPlan(options ForkOptions) (memoryForkPlan, error) {
 	if options.Scope == "tree" {
 		return memoryForkPlan{scope: "tree"}, nil
 	}
 	entryIDs := map[string]bool{}
-	tipValue, err := s.GetValue(BranchTip(options.Branch))
-	if err != nil {
-		return memoryForkPlan{}, err
-	}
+	tipValue := s.getValueLocked(BranchTip(options.Branch))
 	if tipValue == nil {
 		return memoryForkPlan{}, fmt.Errorf("Unknown source branch: %s", options.Branch)
 	}
@@ -212,17 +228,17 @@ func (s *InMemoryStorageState) selectForkPlan(options ForkOptions) (memoryForkPl
 	}
 	plan, err := SelectBranchFork(options, struct {
 		Tip         *string
-		GetParent   func(entryID string) *string
+		GetParent   func(entryID string) (*string, bool)
 		SelectEntry func(entryID string)
 		HasTip      bool
 	}{
 		Tip: tipID,
-		GetParent: func(entryID string) *string {
+		GetParent: func(entryID string) (*string, bool) {
 			entry, ok := s.entries[entryID]
 			if !ok {
-				return nil
+				return nil, false
 			}
-			return entry.ParentID
+			return entry.ParentID, true
 		},
 		SelectEntry: func(entryID string) { entryIDs[entryID] = true },
 		HasTip:      true,
@@ -265,6 +281,8 @@ func (s *InMemoryStorageState) AdvanceNextSeq(nextSeq int64) error {
 	if nextSeq < 1 {
 		return fmt.Errorf("Invalid storage sequence high-water mark: %d", nextSeq)
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if nextSeq > s.nextSeq {
 		s.nextSeq = nextSeq
 	}
@@ -273,6 +291,8 @@ func (s *InMemoryStorageState) AdvanceNextSeq(nextSeq int64) error {
 
 // GetEntries returns found entries by id.
 func (s *InMemoryStorageState) GetEntries(ids []string) map[string]*Entry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	found := map[string]*Entry{}
 	for _, id := range ids {
 		if entry, ok := s.entries[id]; ok {
@@ -284,14 +304,23 @@ func (s *InMemoryStorageState) GetEntries(ids []string) map[string]*Entry {
 
 // GetValue reads one scalar.
 func (s *InMemoryStorageState) GetValue(address Value) (*StoredValue, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.getValueLocked(address), nil
+}
+
+// getValueLocked requires s.mu (read).
+func (s *InMemoryStorageState) getValueLocked(address Value) *StoredValue {
 	if stored, ok := s.scalarValues[physicalKey(address.Namespace, address.Key)]; ok {
-		return stored, nil
+		return stored
 	}
-	return nil, nil
+	return nil
 }
 
 // ScanValues scans by namespace + key prefix, sorted code-point-wise.
 func (s *InMemoryStorageState) ScanValues(prefix Value) []StoredValue {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	out := []StoredValue{}
 	for _, stored := range s.scalarValues {
 		if stored.Address.Namespace == prefix.Namespace && hasKeyPrefix(stored.Address.Key, prefix.Key) {
@@ -315,10 +344,12 @@ func (s *InMemoryStorageState) ReadList(address ValueList, options *ListReadOpti
 		opts = *options
 	}
 	resolved := ResolveListReadOptions(opts)
+	s.mu.RLock()
 	elements := []ListElement{}
 	if stored, ok := s.listValues[physicalKey(address.Namespace, address.Key)]; ok {
 		elements = stored.elements
 	}
+	s.mu.RUnlock()
 	filtered := []ListElement{}
 	for _, element := range elements {
 		if resolved.Cursor == nil {
@@ -346,6 +377,13 @@ func (s *InMemoryStorageState) ReadList(address ValueList, options *ListReadOpti
 
 // ScanBranch walks the ancestry from a start entry.
 func (s *InMemoryStorageState) ScanBranch(query StorageBranchScan) ([]*Entry, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.scanBranchLocked(query)
+}
+
+// scanBranchLocked requires s.mu (read).
+func (s *InMemoryStorageState) scanBranchLocked(query StorageBranchScan) ([]*Entry, error) {
 	start, ok := s.entries[query.StartID]
 	if !ok {
 		return nil, fmt.Errorf("Unknown branch start: %s", query.StartID)
@@ -406,7 +444,9 @@ func (s *InMemoryStorageState) ScanBranch(query StorageBranchScan) ([]*Entry, er
 
 // ScanBranchStructure returns the structure view of ScanBranch.
 func (s *InMemoryStorageState) ScanBranchStructure(query StorageBranchScan) ([]EntryStructure, error) {
-	entries, err := s.ScanBranch(query)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	entries, err := s.scanBranchLocked(query)
 	if err != nil {
 		return nil, err
 	}
@@ -419,6 +459,8 @@ func (s *InMemoryStorageState) ScanBranchStructure(query StorageBranchScan) ([]E
 
 // ScanEntries iterates entriesBySeq in both directions.
 func (s *InMemoryStorageState) ScanEntries(query EntryScan) []*Entry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	limit := int64(-1)
 	if query.Limit != nil {
 		limit = *query.Limit
@@ -448,6 +490,8 @@ func (s *InMemoryStorageState) ScanEntries(query EntryScan) []*Entry {
 
 // ScanUsage scans usage rows by seq window and order.
 func (s *InMemoryStorageState) ScanUsage(query UsageScan) []UsageRow {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	rows := []UsageRow{}
 	for _, row := range s.usage {
 		if query.FromSeq != nil && row.Seq < *query.FromSeq {
@@ -475,10 +519,18 @@ func (s *InMemoryStorageState) ScanUsage(query UsageScan) []UsageRow {
 }
 
 // GetStats returns the session totals.
-func (s *InMemoryStorageState) GetStats() SessionStats { return s.stats }
+func (s *InMemoryStorageState) GetStats() SessionStats {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.stats
+}
 
 // GetNextSeq returns the next sequence.
-func (s *InMemoryStorageState) GetNextSeq() int64 { return s.nextSeq }
+func (s *InMemoryStorageState) GetNextSeq() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.nextSeq
+}
 
 func addUsageUtil(left, right aiUsage) aiUsage {
 	return harnessAddUsage(left, right)
@@ -487,6 +539,8 @@ func addUsageUtil(left, right aiUsage) aiUsage {
 // SnapshotEntries returns the entries in sequence order (fork
 // serialization helper).
 func (s *InMemoryStorageState) SnapshotEntries() []*Entry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	out := make([]*Entry, 0, len(s.entriesBySeq))
 	out = append(out, s.entriesBySeq...)
 	return out
@@ -494,6 +548,8 @@ func (s *InMemoryStorageState) SnapshotEntries() []*Entry {
 
 // SnapshotScalars returns all scalar values (fork serialization helper).
 func (s *InMemoryStorageState) SnapshotScalars() []StoredValue {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	out := make([]StoredValue, 0, len(s.scalarValues))
 	for _, stored := range s.scalarValues {
 		out = append(out, *stored)

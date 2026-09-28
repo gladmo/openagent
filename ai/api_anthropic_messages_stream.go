@@ -207,7 +207,14 @@ func (a *AnthropicMessagesAPI) run(
 		}
 	}
 
-	client := createAnthropicClient(model, apiKey, optionsHeaders, nil, sessionID)
+	// Copilot's gateway routes on the initiator/intent/vision headers for
+	// every transport, this one included; the other transports wire the
+	// same builder.
+	var dynamicHeaders map[string]string
+	if model.Provider == "github-copilot" {
+		dynamicHeaders = BuildCopilotDynamicHeaders(normalizedContext.Messages, HasCopilotVisionInput(normalizedContext.Messages))
+	}
+	client := createAnthropicClient(model, apiKey, optionsHeaders, dynamicHeaders, sessionID)
 	if err := anthropicAssertRequestAuth(model.Provider, apiKey, buildAnthropicRequestHeaders(client)); err != nil {
 		return err
 	}
@@ -397,22 +404,37 @@ func (a *AnthropicMessagesAPI) run(
 			if state == nil {
 				continue
 			}
+			// A delta whose type does not match the block it indexes is
+			// skipped, mirroring the TS tolerance for gateways that emit
+			// mismatched deltas instead of failing the stream.
 			switch deltaType {
 			case "text_delta":
+				if state.kind != "text" {
+					continue
+				}
 				text, _ := JxString(delta, "text")
 				updateTextBlock(output, state.contentIndex, func(t *TextContent) { t.Text += text })
 				stream.Push(&EventTextDelta{ContentIndex: state.contentIndex, Delta: text, Partial: output})
 			case "thinking_delta":
+				if state.kind != "thinking" {
+					continue
+				}
 				thinking, _ := JxString(delta, "thinking")
 				state.thinking.Thinking += thinking
 				output.Content[state.contentIndex] = *state.thinking
 				stream.Push(&EventThinkingDelta{ContentIndex: state.contentIndex, Delta: thinking, Partial: output})
 			case "input_json_delta":
+				if state.kind != "toolCall" {
+					continue
+				}
 				partialJSON, _ := JxString(delta, "partial_json")
 				state.partialJSON += partialJSON
 				state.toolCall.Arguments = ParseStreamingJSONObject(state.partialJSON)
 				stream.Push(&EventToolCallDelta{ContentIndex: state.contentIndex, Delta: partialJSON, Partial: output})
 			case "signature_delta":
+				if state.kind != "thinking" {
+					continue
+				}
 				signature, _ := JxString(delta, "signature")
 				if state.thinking.ThinkingSignature == nil {
 					state.thinking.ThinkingSignature = &signature

@@ -4,6 +4,7 @@ package sessiontesting
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/gladmo/openagent/agent/harness"
 	session "github.com/gladmo/openagent/agent/harness/session"
@@ -60,9 +61,12 @@ type ConformanceCase struct {
 	Run   func() error
 }
 
-// InstrumentedStorage records commit admission transparently.
+// InstrumentedStorage records commit admission transparently. Commit runs
+// on the system under test; the accessors run on the test goroutine, so
+// the recording is mutex-guarded.
 type InstrumentedStorage struct {
 	StorageDecorator
+	mu             sync.Mutex
 	commitAttempts [][]session.Write
 }
 
@@ -73,17 +77,25 @@ func NewInstrumentedStorage(delegate session.Storage) *InstrumentedStorage {
 
 // GetCommitAttempts returns recorded admissions (copy).
 func (s *InstrumentedStorage) GetCommitAttempts() [][]session.Write {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	out := make([][]session.Write, len(s.commitAttempts))
 	copy(out, s.commitAttempts)
 	return out
 }
 
 // ClearCommitAttempts resets the recording.
-func (s *InstrumentedStorage) ClearCommitAttempts() { s.commitAttempts = nil }
+func (s *InstrumentedStorage) ClearCommitAttempts() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.commitAttempts = nil
+}
 
 // Commit records then forwards.
 func (s *InstrumentedStorage) Commit(writes []session.Write, ctx harness.Context) (session.CommitResult, error) {
+	s.mu.Lock()
 	s.commitAttempts = append(s.commitAttempts, writes)
+	s.mu.Unlock()
 	return s.Delegate.Commit(writes, ctx)
 }
 
@@ -99,9 +111,13 @@ type parkedCommit struct {
 	landing chan error
 }
 
-// GatingStorage deterministically parks admitted commits.
+// GatingStorage deterministically parks admitted commits. Parked commits
+// arrive on the system-under-test goroutines while the driver releases
+// them from the test goroutine, so the shared state is mutex-guarded; the
+// guard is never held while a commit is parked.
 type GatingStorage struct {
 	StorageDecorator
+	mu        sync.Mutex
 	armed     bool
 	discarded bool
 	queue     []*parkedCommit
@@ -113,28 +129,33 @@ func NewGatingStorage(delegate session.Storage) *GatingStorage {
 }
 
 // Arm enables gating (fixture setup bypasses until armed).
-func (s *GatingStorage) Arm() { s.armed = true }
+func (s *GatingStorage) Arm() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.armed = true
+}
 
 // Pending returns the parked count.
-func (s *GatingStorage) Pending() int { return len(s.queue) }
+func (s *GatingStorage) Pending() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.queue)
+}
 
 // WaitPending blocks until at least count commits are parked.
 func (s *GatingStorage) WaitPending(count int) error {
 	if count < 1 {
 		return fmt.Errorf("Pending commit count must be a positive safe integer")
 	}
-	if s.discarded {
-		return &CommitDiscarded{Message: "storage discarded"}
-	}
-	if len(s.queue) >= count {
-		return nil
-	}
-	// Poll until enough commits park (or a discard lands).
 	for {
-		if s.discarded {
+		s.mu.Lock()
+		discarded := s.discarded
+		pending := len(s.queue)
+		s.mu.Unlock()
+		if discarded {
 			return &CommitDiscarded{Message: "storage discarded"}
 		}
-		if len(s.queue) >= count {
+		if pending >= count {
 			return nil
 		}
 		// The parked channels are released by Next; polling keeps the
@@ -145,10 +166,14 @@ func (s *GatingStorage) WaitPending(count int) error {
 
 // Commit parks when armed, then forwards.
 func (s *GatingStorage) Commit(writes []session.Write, ctx harness.Context) (session.CommitResult, error) {
-	if s.discarded {
+	s.mu.Lock()
+	discarded := s.discarded
+	armed := s.armed
+	s.mu.Unlock()
+	if discarded {
 		return session.CommitResult{}, &CommitDiscarded{Message: "commit rejected: storage discarded"}
 	}
-	if !s.armed {
+	if !armed {
 		return s.Delegate.Commit(writes, ctx)
 	}
 	parked := &parkedCommit{
@@ -156,10 +181,15 @@ func (s *GatingStorage) Commit(writes []session.Write, ctx harness.Context) (ses
 		drop:    make(chan error, 1),
 		landing: make(chan error, 1),
 	}
+	s.mu.Lock()
 	s.queue = append(s.queue, parked)
+	s.mu.Unlock()
 	select {
 	case <-parked.release:
-		if s.discarded {
+		s.mu.Lock()
+		discarded := s.discarded
+		s.mu.Unlock()
+		if discarded {
 			return session.CommitResult{}, &CommitDiscarded{Message: "commit rejected: storage discarded"}
 		}
 		result, err := s.Delegate.Commit(writes, ctx)
@@ -184,11 +214,14 @@ func (s *GatingStorage) Next(count int) error {
 		if err := s.WaitPending(1); err != nil {
 			return err
 		}
+		s.mu.Lock()
 		if len(s.queue) == 0 {
+			s.mu.Unlock()
 			return fmt.Errorf("No parked commit")
 		}
 		parked := s.queue[0]
 		s.queue = s.queue[1:]
+		s.mu.Unlock()
 		close(parked.release)
 		if err := <-parked.landing; err != nil {
 			return err
@@ -199,13 +232,17 @@ func (s *GatingStorage) Next(count int) error {
 
 // Discard drops parked commits and permanently rejects later ones.
 func (s *GatingStorage) Discard() {
+	s.mu.Lock()
 	if s.discarded {
+		s.mu.Unlock()
 		return
 	}
 	s.discarded = true
-	err := &CommitDiscarded{Message: "commit discarded"}
-	for _, parked := range s.queue {
-		parked.drop <- err
-	}
+	parked := s.queue
 	s.queue = nil
+	s.mu.Unlock()
+	err := &CommitDiscarded{Message: "commit discarded"}
+	for _, p := range parked {
+		p.drop <- err
+	}
 }

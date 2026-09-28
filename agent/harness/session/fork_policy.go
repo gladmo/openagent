@@ -15,9 +15,11 @@ type ForkCurrentStatePlan struct {
 }
 
 // SelectBranchFork walks tip -> root, selecting entries on the ancestry.
+// GetParent reports (nil, true) at a root entry and (_, false) when the
+// entry does not exist.
 func SelectBranchFork(options ForkOptions, source struct {
 	Tip         *string
-	GetParent   func(entryID string) *string
+	GetParent   func(entryID string) (*string, bool)
 	SelectEntry func(entryID string)
 	HasTip      bool
 }) (ForkCurrentStatePlan, error) {
@@ -34,8 +36,8 @@ func SelectBranchFork(options ForkOptions, source struct {
 	var destinationTip *string
 	entryID := source.Tip
 	for entryID != nil {
-		parentID := source.GetParent(*entryID)
-		if parentID == nil {
+		parentID, hasEntry := source.GetParent(*entryID)
+		if !hasEntry {
 			return ForkCurrentStatePlan{}, fmt.Errorf("Corrupt source branch: missing parent %s", *entryID)
 		}
 		if requested != nil && *entryID == *requested {

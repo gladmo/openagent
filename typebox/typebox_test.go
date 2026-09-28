@@ -1,6 +1,7 @@
 package typebox
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/gladmo/openagent/jsonx"
@@ -182,4 +183,32 @@ func TestIntegerCheck(t *testing.T) {
 	if !Compile(s).Check(v2) {
 		t.Fatal("2.0 rejected as integer")
 	}
+}
+
+func TestPatternValidationConcurrent(t *testing.T) {
+	// Parallel tool-argument validation compiles patterns concurrently;
+	// the cache must stay race-free (fatal if unsynchronized).
+	schema := &Schema{}
+	if err := schema.UnmarshalJSON([]byte(`{"type":"string","pattern":"^[a-z]+$"}`)); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			v := Compile(schema)
+			for j := 0; j < 200; j++ {
+				if !v.Check("abc") {
+					t.Errorf("valid rejected")
+					return
+				}
+				if v.Check("ABC") {
+					t.Errorf("invalid accepted")
+					return
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
 }
