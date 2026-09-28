@@ -17,6 +17,7 @@ ZAI_CODING_CN_API_KEY=<密钥> ./data_query_agent
 ## 指南
 
 - [examples/data_query_agent](../../examples/data_query_agent) —— 跑在 `ai` 提供方栈上的可运行 agent，带一个自定义工具。
+- [examples/coding_agent](../../examples/coding_agent) —— 组合 `agent/harness` 工具链的编码 agent：read/write/edit/bash 四件套跑在真实执行环境上，由 agent 循环驱动。
 
 ## 获取帮助
 

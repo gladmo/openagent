@@ -17,6 +17,7 @@ ZAI_CODING_CN_API_KEY=<key> ./data_query_agent
 ## Guides
 
 - [examples/data_query_agent](../../examples/data_query_agent) — runnable agent over the `ai` provider stack with one custom tool.
+- [examples/coding_agent](../../examples/coding_agent) — coding agent composing the `agent/harness` toolchain: read/write/edit/bash tools over a real execution env, driven through the agent loop.
 
 ## Getting help
 
