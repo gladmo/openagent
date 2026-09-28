@@ -21,6 +21,7 @@ telemetry/    Span contract, NOOP / in-memory contexts
 chord/        JSON contracts, context/, delta/, services/
 ai/           Types, streaming, retry, catalog, providers
 agent/        Agent loop, proxy, search, harness/ and tools
+trajectory/   Run-record logs ([module](modules/trajectory.md))
 examples/     Runnable example agents
 ```
 
@@ -35,6 +36,7 @@ examples/     Runnable example agents
 - **Providers:** implement the provider core in `ai/`, register with its catalog entry.
 - **Tools:** define tools in `agent/harness/tools`; the loop's dispatch calls them.
 - **Telemetry:** span schemas via `telemetry/` contexts; NOOP and in-memory ship.
+- **Trajectory:** run records via `trajectory/` ([module](modules/trajectory.md)).
 
 ## Invariants
 

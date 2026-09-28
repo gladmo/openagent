@@ -21,6 +21,7 @@ telemetry/    Span 契约，NOOP / 内存上下文
 chord/        JSON 契约、context/、delta/、services/
 ai/           类型、流式、重试、目录、提供方
 agent/        Agent 循环、代理、搜索、harness/ 与工具
+trajectory/   运行轨迹日志（[模块页](modules/trajectory.zh.md)）
 examples/     可运行的示例 agent
 ```
 
@@ -35,6 +36,7 @@ examples/     可运行的示例 agent
 - **提供方：** 在 `ai/` 实现提供方核心，随其目录条目注册。
 - **工具：** 在 `agent/harness/tools` 定义工具，由循环调度调用。
 - **遥测：** 经 `telemetry/` 上下文定义 span 模式；内置 NOOP 与内存实现。
+- **轨迹：** 运行记录见 `trajectory/`（[模块页](modules/trajectory.zh.md)）。
 
 ## 不变量
 

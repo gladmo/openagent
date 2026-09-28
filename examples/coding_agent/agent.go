@@ -37,6 +37,7 @@ import (
 	"github.com/gladmo/openagent/ai"
 	chordcontext "github.com/gladmo/openagent/chord/context"
 	"github.com/gladmo/openagent/jsonx"
+	"github.com/gladmo/openagent/trajectory"
 )
 
 const (
@@ -115,6 +116,17 @@ func main() {
 			return models.StreamSimple(m, ai.Context{Messages: ctx.Messages}, opts)
 		},
 	})
+
+	traj := trajectory.New(trajectory.Options{ID: "demo-session"})
+	_, dispose, err := trajectory.Attach(session, trajectory.RecorderOptions{Trajectory: traj})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "挂载采集器失败:", err)
+		os.Exit(1)
+	}
+	defer dispose()
+	// stdout NDJSON 记录:Attach 已提交 session/start,用补投模式接全量。
+	stopStdout := trajectory.PipeSubscribeAfter(traj, trajectory.NewStdoutSink(os.Stdout), 0)
+	defer stopStdout()
 
 	var sawTextDelta bool
 	unsubscribe := session.Subscribe(func(event agent.AgentEvent, _ *abort.Signal) {
