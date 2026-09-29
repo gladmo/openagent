@@ -5,7 +5,7 @@
 //
 //	harness 组件                            本示例用途
 //	──────────────────────────────          ─────────────────────────────
-//	env/nodejs.NodeExecutionEnv             真实 FileSystem + Shell 执行环境
+//	env/local.LocalExecutionEnv             真实 FileSystem + Shell 执行环境
 //	tools.CreateReadTool/Write/Edit/Bash    编码四件套(读/写/改/执行命令)
 //	harness.Prepare/Execute/FinalizeToolCall 工具执行管线(参数校验、
 //	                                        panic→错误结果、after-tool 补丁)
@@ -32,7 +32,7 @@ import (
 	"github.com/gladmo/openagent/abort"
 	"github.com/gladmo/openagent/agent"
 	"github.com/gladmo/openagent/agent/harness"
-	"github.com/gladmo/openagent/agent/harness/env/nodejs"
+	"github.com/gladmo/openagent/agent/harness/env/local"
 	"github.com/gladmo/openagent/agent/harness/tools"
 	"github.com/gladmo/openagent/ai"
 	chordcontext "github.com/gladmo/openagent/chord/context"
@@ -62,7 +62,7 @@ func main() {
 	// ---------------------------------------------------------------
 	// 1. 执行环境 + 效果闸门(harness 侧的两个基础件)
 	//
-	// NodeExecutionEnv 提供真实文件系统与 Shell;Gate 是执行管线的
+	// LocalExecutionEnv 提供真实文件系统与 Shell;Gate 是执行管线的
 	// 准入闸门(本示例全程放行,关闭由 defer 统一收尾)。
 	// ---------------------------------------------------------------
 	dir, err := resolveWorkdir(*workdir)
@@ -70,7 +70,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "工作目录不可用:%v\n", err)
 		os.Exit(1)
 	}
-	env := nodejs.New(dir)
+	env := local.New(dir)
 	defer func() { _ = env.Cleanup(chordcontext.BackgroundContext) }()
 	gate, gateControl := harness.CreateGate()
 	defer gateControl.Close(nil)

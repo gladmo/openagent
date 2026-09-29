@@ -65,7 +65,8 @@
   events 总线、hooks 注册表、execution（gate/tools/assistant）、aliases
 - `harness/tools/`：path-utils、image 嗅探、write/read+变更队列、edit（+diff）、bash
   （超时校验/Prepare/截断脚注/错误映射）
-- `harness/env/nodejs/`：真实 ExecutionEnv（路径解析、errno 映射、完整 FS、拉式行读、
+- `harness/env/local/`（移植自参考的 `env/nodejs.ts`；改名见 Agent Note
+  `env-local-rename`）：真实 ExecutionEnv（路径解析、errno 映射、完整 FS、拉式行读、
   shell 发现链+进程组树杀、OutputCapture 集成）；spill 文件写延迟（布线完成，文档化）
 
 ## session + jsonl（P6）✅ 全量

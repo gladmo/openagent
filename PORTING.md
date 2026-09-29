@@ -11,7 +11,7 @@ Reference: `../pi` at commit `ff72faba2` (packages: agent v0.87.1 + ai/chord/tel
 | P2 | chord closure (root json/types, context, delta/index) + tests | **done** |
 | P3 | ai closure (types, models, faux, utils subset, auth subset) + tests | **done** |
 | P4 | agent root pkg (types, stream-fn, agent-loop, agent, proxy, search) + tests | **in progress** |
-| P5 | harness top-level + utils + tools + env/nodejs + tests | pending |
+| P5 | harness top-level + utils + tools + env/nodejs (Go: env/local) + tests | pending |
 | P6 | session core + jsonl + session/testing + tests | pending |
 | P7 | runtime (lane, drive pipeline, reducer, restore) + agent-harness + tests | pending |
 | P8 | chord tracker/services subset + pico3 + prioritized tests | pending |
@@ -491,7 +491,8 @@ ai/           P3 IN PROGRESS. DONE so far:
               truncation footers (partial last line w/ size, lines, bytes
               limit), timeout/aborted/other status messages w/ output
               prefixed, exit != 0 error w/ code, "(no output)" fallback;
-              nil onUpdate guarded); agent/harness/env/nodejs/ (real
+              nil onUpdate guarded); agent/harness/env/local/ [renamed from
+              env/nodejs -- see Agent Note env-local-rename] (real
               ExecutionEnv: resolvePath ~ + ~/ + file:// + abs/cwd;
               toFileError errno map not_found/permission/not_directory/
               is_directory/invalid -> codes; full FileSystem impl w/ abort
@@ -661,7 +662,7 @@ ai/           P3 IN PROGRESS. DONE so far:
               documented), path side-table (session metadata has no Path
               field in the Go port -- repo tracks cwd+id+createdAt->path),
               Close no-op TODO; fakeFS in tests now MkdirAlls parents
-              (mirrors nodejs env WriteFile); MEMORY: JsonlSessionRepo does
+              (mirrors local env WriteFile); MEMORY: JsonlSessionRepo does
               NOT initialize branches (harness runtime does; unlike
               MemorySessionRepo which creates main) -- tests must
               CreateBranch first).

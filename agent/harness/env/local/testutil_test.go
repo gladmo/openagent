@@ -1,4 +1,4 @@
-package nodejs
+package local
 
 import (
 	"github.com/gladmo/openagent/abort"

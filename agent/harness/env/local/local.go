@@ -1,6 +1,7 @@
-// Package nodejs ports harness/env/nodejs.ts: the real-filesystem
-// ExecutionEnv backed by Go's os/exec and os packages.
-package nodejs
+// Package local ports the reference harness/env/nodejs.ts: the real
+// local-filesystem ExecutionEnv backed by Go's os and os/exec packages.
+// No Node.js runtime is involved; the reference filename is provenance only.
+package local
 
 import (
 	"fmt"
@@ -15,8 +16,8 @@ import (
 	"github.com/gladmo/openagent/agent/harness"
 )
 
-// NodeExecutionEnv mirrors NodeExecutionEnv{cwd, shellPath?, shellEnv?}.
-type NodeExecutionEnv struct {
+// LocalExecutionEnv mirrors the TS NodeExecutionEnv{cwd, shellPath?, shellEnv?}.
+type LocalExecutionEnv struct {
 	cwd       string
 	shellPath string
 	shellEnv  map[string]string
@@ -26,8 +27,8 @@ type NodeExecutionEnv struct {
 }
 
 // New creates an execution env rooted at cwd.
-func New(cwd string, options ...func(*NodeExecutionEnv)) *NodeExecutionEnv {
-	env := &NodeExecutionEnv{cwd: cwd}
+func New(cwd string, options ...func(*LocalExecutionEnv)) *LocalExecutionEnv {
+	env := &LocalExecutionEnv{cwd: cwd}
 	for _, option := range options {
 		option(env)
 	}
@@ -35,17 +36,17 @@ func New(cwd string, options ...func(*NodeExecutionEnv)) *NodeExecutionEnv {
 }
 
 // WithShellPath sets a custom shell path.
-func WithShellPath(path string) func(*NodeExecutionEnv) {
-	return func(e *NodeExecutionEnv) { e.shellPath = path }
+func WithShellPath(path string) func(*LocalExecutionEnv) {
+	return func(e *LocalExecutionEnv) { e.shellPath = path }
 }
 
 // WithShellEnv sets extra environment variables.
-func WithShellEnv(shellEnv map[string]string) func(*NodeExecutionEnv) {
-	return func(e *NodeExecutionEnv) { e.shellEnv = shellEnv }
+func WithShellEnv(shellEnv map[string]string) func(*LocalExecutionEnv) {
+	return func(e *LocalExecutionEnv) { e.shellEnv = shellEnv }
 }
 
 // Cwd returns the working directory.
-func (e *NodeExecutionEnv) Cwd() string { return e.cwd }
+func (e *LocalExecutionEnv) Cwd() string { return e.cwd }
 
 const (
 	maxTimeoutMS       = 2147483647
@@ -70,7 +71,7 @@ func resolveTimeoutMS(timeout *float64) (float64, bool, *harness.ExecutionError)
 
 // resolvePath mirrors the TS resolution: ~ expansion, file:// URLs, then
 // absolute/relative resolution against cwd.
-func (e *NodeExecutionEnv) resolvePath(path string) string {
+func (e *LocalExecutionEnv) resolvePath(path string) string {
 	normalized := path
 	home, homeErr := os.UserHomeDir()
 	if normalized == "~" && homeErr == nil {
@@ -169,21 +170,21 @@ func abortFileError[T any](signalPath string) harness.Result[T, *harness.FileErr
 // FileSystem
 // ---------------------------------------------------------------------------
 
-func (e *NodeExecutionEnv) AbsolutePath(path string, ctx harness.Context) harness.Result[string, *harness.FileError] {
+func (e *LocalExecutionEnv) AbsolutePath(path string, ctx harness.Context) harness.Result[string, *harness.FileError] {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[string](path)
 	}
 	return harness.Ok[string, *harness.FileError](e.resolvePath(path))
 }
 
-func (e *NodeExecutionEnv) JoinPath(parts []string, ctx harness.Context) harness.Result[string, *harness.FileError] {
+func (e *LocalExecutionEnv) JoinPath(parts []string, ctx harness.Context) harness.Result[string, *harness.FileError] {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[string]("")
 	}
 	return harness.Ok[string, *harness.FileError](filepath.Join(parts...))
 }
 
-func (e *NodeExecutionEnv) ReadTextFile(path string, ctx harness.Context) harness.Result[string, *harness.FileError] {
+func (e *LocalExecutionEnv) ReadTextFile(path string, ctx harness.Context) harness.Result[string, *harness.FileError] {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[string](path)
 	}
@@ -195,7 +196,7 @@ func (e *NodeExecutionEnv) ReadTextFile(path string, ctx harness.Context) harnes
 	return harness.Ok[string, *harness.FileError](string(data))
 }
 
-func (e *NodeExecutionEnv) ReadTextLines(path string, options *harness.ReadTextLinesOptions, ctx harness.Context) harness.Result[[]string, *harness.FileError] {
+func (e *LocalExecutionEnv) ReadTextLines(path string, options *harness.ReadTextLinesOptions, ctx harness.Context) harness.Result[[]string, *harness.FileError] {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[[]string](path)
 	}
@@ -215,7 +216,7 @@ func (e *NodeExecutionEnv) ReadTextLines(path string, options *harness.ReadTextL
 	return harness.Ok[[]string, *harness.FileError](lines)
 }
 
-func (e *NodeExecutionEnv) ReadBinaryFile(path string, ctx harness.Context) harness.Result[[]byte, *harness.FileError] {
+func (e *LocalExecutionEnv) ReadBinaryFile(path string, ctx harness.Context) harness.Result[[]byte, *harness.FileError] {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[[]byte](path)
 	}
@@ -227,7 +228,7 @@ func (e *NodeExecutionEnv) ReadBinaryFile(path string, ctx harness.Context) harn
 	return harness.Ok[[]byte, *harness.FileError](data)
 }
 
-func (e *NodeExecutionEnv) WriteFile(path string, content []byte, ctx harness.Context) harness.Result[struct{}, *harness.FileError] {
+func (e *LocalExecutionEnv) WriteFile(path string, content []byte, ctx harness.Context) harness.Result[struct{}, *harness.FileError] {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[struct{}](path)
 	}
@@ -241,7 +242,7 @@ func (e *NodeExecutionEnv) WriteFile(path string, content []byte, ctx harness.Co
 	return harness.Ok[struct{}, *harness.FileError](struct{}{})
 }
 
-func (e *NodeExecutionEnv) AppendFile(path string, content []byte, ctx harness.Context) harness.Result[struct{}, *harness.FileError] {
+func (e *LocalExecutionEnv) AppendFile(path string, content []byte, ctx harness.Context) harness.Result[struct{}, *harness.FileError] {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[struct{}](path)
 	}
@@ -260,7 +261,7 @@ func (e *NodeExecutionEnv) AppendFile(path string, content []byte, ctx harness.C
 	return harness.Ok[struct{}, *harness.FileError](struct{}{})
 }
 
-func (e *NodeExecutionEnv) RenameFile(sourcePath, destinationPath string, ctx harness.Context) harness.Result[struct{}, *harness.FileError] {
+func (e *LocalExecutionEnv) RenameFile(sourcePath, destinationPath string, ctx harness.Context) harness.Result[struct{}, *harness.FileError] {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[struct{}](sourcePath)
 	}
@@ -275,7 +276,7 @@ func (e *NodeExecutionEnv) RenameFile(sourcePath, destinationPath string, ctx ha
 	return harness.Ok[struct{}, *harness.FileError](struct{}{})
 }
 
-func (e *NodeExecutionEnv) FileInfo(path string, ctx harness.Context) harness.Result[harness.FileInfo, *harness.FileError] {
+func (e *LocalExecutionEnv) FileInfo(path string, ctx harness.Context) harness.Result[harness.FileInfo, *harness.FileError] {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[harness.FileInfo](path)
 	}
@@ -289,7 +290,7 @@ func (e *NodeExecutionEnv) FileInfo(path string, ctx harness.Context) harness.Re
 	return result
 }
 
-func (e *NodeExecutionEnv) ListDir(path string, ctx harness.Context) harness.Result[[]harness.FileInfo, *harness.FileError] {
+func (e *LocalExecutionEnv) ListDir(path string, ctx harness.Context) harness.Result[[]harness.FileInfo, *harness.FileError] {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[[]harness.FileInfo](path)
 	}
@@ -312,7 +313,7 @@ func (e *NodeExecutionEnv) ListDir(path string, ctx harness.Context) harness.Res
 	return harness.Ok[[]harness.FileInfo, *harness.FileError](out)
 }
 
-func (e *NodeExecutionEnv) CanonicalPath(path string, ctx harness.Context) harness.Result[string, *harness.FileError] {
+func (e *LocalExecutionEnv) CanonicalPath(path string, ctx harness.Context) harness.Result[string, *harness.FileError] {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[string](path)
 	}
@@ -324,7 +325,7 @@ func (e *NodeExecutionEnv) CanonicalPath(path string, ctx harness.Context) harne
 	return harness.Ok[string, *harness.FileError](canonical)
 }
 
-func (e *NodeExecutionEnv) Exists(path string, ctx harness.Context) harness.Result[bool, *harness.FileError] {
+func (e *LocalExecutionEnv) Exists(path string, ctx harness.Context) harness.Result[bool, *harness.FileError] {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[bool](path)
 	}
@@ -338,7 +339,7 @@ func (e *NodeExecutionEnv) Exists(path string, ctx harness.Context) harness.Resu
 	return harness.Ok[bool, *harness.FileError](true)
 }
 
-func (e *NodeExecutionEnv) CreateDir(path string, options *harness.CreateDirOptions, ctx harness.Context) harness.Result[struct{}, *harness.FileError] {
+func (e *LocalExecutionEnv) CreateDir(path string, options *harness.CreateDirOptions, ctx harness.Context) harness.Result[struct{}, *harness.FileError] {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[struct{}](path)
 	}
@@ -359,7 +360,7 @@ func (e *NodeExecutionEnv) CreateDir(path string, options *harness.CreateDirOpti
 	return harness.Ok[struct{}, *harness.FileError](struct{}{})
 }
 
-func (e *NodeExecutionEnv) Remove(path string, options *harness.RemoveOptions, ctx harness.Context) harness.Result[struct{}, *harness.FileError] {
+func (e *LocalExecutionEnv) Remove(path string, options *harness.RemoveOptions, ctx harness.Context) harness.Result[struct{}, *harness.FileError] {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[struct{}](path)
 	}
@@ -389,7 +390,7 @@ func (e *NodeExecutionEnv) Remove(path string, options *harness.RemoveOptions, c
 	return harness.Ok[struct{}, *harness.FileError](struct{}{})
 }
 
-func (e *NodeExecutionEnv) CreateTempDir(prefix string, ctx harness.Context) harness.Result[string, *harness.FileError] {
+func (e *LocalExecutionEnv) CreateTempDir(prefix string, ctx harness.Context) harness.Result[string, *harness.FileError] {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[string]("")
 	}
@@ -403,7 +404,7 @@ func (e *NodeExecutionEnv) CreateTempDir(prefix string, ctx harness.Context) har
 	return harness.Ok[string, *harness.FileError](dir)
 }
 
-func (e *NodeExecutionEnv) CreateTempFile(options *harness.CreateTempFileOptions, ctx harness.Context) harness.Result[string, *harness.FileError] {
+func (e *LocalExecutionEnv) CreateTempFile(options *harness.CreateTempFileOptions, ctx harness.Context) harness.Result[string, *harness.FileError] {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[string]("")
 	}
@@ -424,7 +425,7 @@ func (e *NodeExecutionEnv) CreateTempFile(options *harness.CreateTempFileOptions
 	return harness.Ok[string, *harness.FileError](f.Name())
 }
 
-func (e *NodeExecutionEnv) Cleanup(ctx harness.Context) error { return nil }
+func (e *LocalExecutionEnv) Cleanup(ctx harness.Context) error { return nil }
 
 // ---------------------------------------------------------------------------
 // Shell
@@ -454,7 +455,7 @@ func getBashShellConfig(shell string) shellConfig {
 	return shellConfig{shell: shell, args: []string{"-c"}, commandTransport: "argv"}
 }
 
-func (e *NodeExecutionEnv) getShellConfig() (shellConfig, *harness.ExecutionError) {
+func (e *LocalExecutionEnv) getShellConfig() (shellConfig, *harness.ExecutionError) {
 	if e.shellPath != "" {
 		if _, err := os.Stat(e.shellPath); err == nil {
 			return getBashShellConfig(e.shellPath), nil
@@ -470,7 +471,7 @@ func (e *NodeExecutionEnv) getShellConfig() (shellConfig, *harness.ExecutionErro
 	return shellConfig{shell: "sh", args: []string{"-c"}, commandTransport: "argv"}, nil
 }
 
-func (e *NodeExecutionEnv) getShellEnv(extraEnv map[string]string, inheritEnv bool) []string {
+func (e *LocalExecutionEnv) getShellEnv(extraEnv map[string]string, inheritEnv bool) []string {
 	if !inheritEnv {
 		env := []string{}
 		for k, v := range extraEnv {
@@ -497,7 +498,7 @@ func killProcessTree(pid int) {
 
 // Exec mirrors the TS shell execution: bash -c command with combined
 // stdout/stderr capture, bounded view, spill file, timeout and abort.
-func (e *NodeExecutionEnv) Exec(command string, options *harness.ShellExecOptions, ctx harness.Context) harness.Result[harness.ShellExecResult, *harness.ExecutionError] {
+func (e *LocalExecutionEnv) Exec(command string, options *harness.ShellExecOptions, ctx harness.Context) harness.Result[harness.ShellExecResult, *harness.ExecutionError] {
 	var timeout *float64
 	var captureOptions *harness.ShellOutputCaptureOptions
 	var onUpdate func(harness.ShellOutputUpdate, harness.Context)
@@ -626,14 +627,14 @@ func (e *NodeExecutionEnv) Exec(command string, options *harness.ShellExecOption
 	})
 }
 
-func (e *NodeExecutionEnv) trackPID(pid int) {
+func (e *LocalExecutionEnv) trackPID(pid int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.childPIDs = append(e.childPIDs, pid)
 }
 
 // CleanupShell kills tracked child processes.
-func (e *NodeExecutionEnv) CleanupShell(ctx harness.Context) error {
+func (e *LocalExecutionEnv) CleanupShell(ctx harness.Context) error {
 	e.mu.Lock()
 	pids := append([]int{}, e.childPIDs...)
 	e.childPIDs = nil
@@ -645,7 +646,7 @@ func (e *NodeExecutionEnv) CleanupShell(ctx harness.Context) error {
 }
 
 // OpenTextLineReader opens a pull-based line reader.
-func (e *NodeExecutionEnv) OpenTextLineReader(path string, ctx harness.Context) harness.Result[harness.TextLineReader, *harness.FileError] {
+func (e *LocalExecutionEnv) OpenTextLineReader(path string, ctx harness.Context) harness.Result[harness.TextLineReader, *harness.FileError] {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[harness.TextLineReader](path)
 	}
@@ -654,19 +655,19 @@ func (e *NodeExecutionEnv) OpenTextLineReader(path string, ctx harness.Context) 
 	if err != nil {
 		return harness.Err[harness.TextLineReader, *harness.FileError](toFileError(err, resolved))
 	}
-	return harness.Ok[harness.TextLineReader, *harness.FileError](&nodeTextLineReader{file: f, offset: 0})
+	return harness.Ok[harness.TextLineReader, *harness.FileError](&localTextLineReader{file: f, offset: 0})
 }
 
-// nodeTextLineReader reads 64KB chunks at explicit byte offsets with strict
+// localTextLineReader reads 64KB chunks at explicit byte offsets with strict
 // LF termination semantics.
-type nodeTextLineReader struct {
+type localTextLineReader struct {
 	file   *os.File
 	offset int64
 	buf    []byte
 	eof    bool
 }
 
-func (r *nodeTextLineReader) ReadLine(ctx harness.Context) (harness.Result[*harness.TextLine, *harness.FileError], error) {
+func (r *localTextLineReader) ReadLine(ctx harness.Context) (harness.Result[*harness.TextLine, *harness.FileError], error) {
 	if ctx.AbortSignal().Aborted() {
 		return abortFileError[*harness.TextLine](""), nil
 	}
@@ -711,7 +712,7 @@ func indexByte(b []byte, c byte) int {
 	return -1
 }
 
-func (r *nodeTextLineReader) Close(harness.Context) error { return r.file.Close() }
+func (r *localTextLineReader) Close(harness.Context) error { return r.file.Close() }
 
 // execCapture adapts OutputCapture for exec streaming.
 type execCapture struct {

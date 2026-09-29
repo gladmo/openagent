@@ -9,7 +9,7 @@ import (
 
 	"github.com/gladmo/openagent/agent"
 	"github.com/gladmo/openagent/agent/harness"
-	"github.com/gladmo/openagent/agent/harness/env/nodejs"
+	"github.com/gladmo/openagent/agent/harness/env/local"
 	"github.com/gladmo/openagent/agent/harness/tools"
 	chordcontext "github.com/gladmo/openagent/chord/context"
 	"github.com/gladmo/openagent/jsonx"
@@ -22,7 +22,7 @@ type testToolset struct {
 
 func newTestToolset(t *testing.T) testToolset {
 	t.Helper()
-	env := nodejs.New(t.TempDir())
+	env := local.New(t.TempDir())
 	t.Cleanup(func() { _ = env.Cleanup(chordcontext.BackgroundContext) })
 	gate, control := harness.CreateGate()
 	t.Cleanup(func() { control.Close(nil) })

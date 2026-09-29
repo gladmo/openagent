@@ -1,4 +1,4 @@
-package nodejs
+package local
 
 // Ports of nodejs-env.test.ts (representative cases) and tools.test.ts
 // bash cases.
@@ -14,7 +14,7 @@ import (
 	"github.com/gladmo/openagent/jsonx"
 )
 
-func newEnv(t *testing.T) *NodeExecutionEnv {
+func newEnv(t *testing.T) *LocalExecutionEnv {
 	t.Helper()
 	return New(t.TempDir())
 }
