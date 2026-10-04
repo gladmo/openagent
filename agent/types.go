@@ -143,9 +143,17 @@ type AgentMessage interface{ Role() string }
 
 // AgentToolResult mirrors the TS interface. Details is arbitrary JSON.
 type AgentToolResult struct {
-	Content   []ai.ContentBlock
-	Details   any
-	Usage     *ai.Usage
+	Content []ai.ContentBlock
+	Details any
+	// StructuredContent is the machine-readable result matching the
+	// tool's output schema, for programmatic callers. Not sent to the
+	// model; Content remains the model-facing result.
+	StructuredContent *jsonx.Obj
+	Usage             *ai.Usage
+	// IsError reports a failure without throwing. The model sees Content
+	// as an error result, like a thrown error, but Details and
+	// StructuredContent are kept for the UI and programmatic callers.
+	IsError   bool
 	Terminate *bool
 }
 

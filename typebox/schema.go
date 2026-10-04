@@ -85,6 +85,44 @@ func applyExtras(s *Schema, options []Option) {
 		}
 		opt(s.Extra)
 	}
+	// Builder options hydrate the constraint fields exactly like decoding:
+	// validation reads the fields, serialization reads Extra.
+	hydrateConstraints(s, s.Extra)
+}
+
+// hydrateConstraints copies known constraint keywords into their schema
+// fields (shared by the builder path and the JSON decode path).
+func hydrateConstraints(s *Schema, obj *jsonx.Obj) {
+	if obj == nil {
+		return
+	}
+	for _, kw := range []struct {
+		name string
+		dst  **float64
+		str  **string
+	}{
+		{"minLength", &s.MinLength, nil},
+		{"maxLength", &s.MaxLength, nil},
+		{"minimum", &s.Minimum, nil},
+		{"maximum", &s.Maximum, nil},
+		{"exclusiveMinimum", &s.ExclusiveMinimum, nil},
+		{"exclusiveMaximum", &s.ExclusiveMaximum, nil},
+		{"pattern", nil, &s.Pattern},
+	} {
+		v, ok := obj.Get(kw.name)
+		if !ok {
+			continue
+		}
+		if kw.str != nil {
+			if str, ok := v.(string); ok {
+				*kw.str = &str
+			}
+			continue
+		}
+		if f, ok := jsonx.ToFloat(v); ok {
+			*kw.dst = &f
+		}
+	}
 }
 
 // Object creates an Object schema. Required is auto-computed from

@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-A Go 1:1 rewrite of the pi agent stack — the `agent`, `ai`, `chord`, and `telemetry` packages plus their dependency closures (TypeBox, jsdiff, ignore, partial-json rewritten as pure Go) — preserving module names, behavior, and JavaScript JSON semantics. [PORTING.md](PORTING.md) tracks the port phases; [PARITY.md](PARITY.md) audits per-file parity against the TypeScript reference.
+A Go 1:1 rewrite of the pi agent stack — the `agent`, `ai`, `chord`, and `telemetry` packages plus their dependency closures (TypeBox, jsdiff, ignore, partial-json rewritten as pure Go), the coding-agent CLI with its `tui` dependency, and the MCP client stack (stdio and Streamable HTTP transports, OAuth sign-in; `openagent mcp` manages servers) — preserving module names, behavior, and JavaScript JSON semantics. [PORTING.md](PORTING.md) tracks the port phases; [PARITY.md](PARITY.md) audits per-file parity against the TypeScript reference.
 
 ## Start here
 

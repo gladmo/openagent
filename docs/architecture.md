@@ -6,7 +6,7 @@ How openagent composes and where behavior extends. Rationale lives in [Agent Not
 
 ## Overview
 
-openagent is a Go 1:1 rewrite of the pi monorepo's TypeScript agent stack (`agent` v0.87.1 with its `ai`, `chord`, and `telemetry` closures; commit `ff72faba2`). Packages mirror the source in name and behavior; npm dependencies become standalone Go packages; layering matches the reference: base libraries, chord, the ai provider stack, the agent loop.
+openagent is a Go 1:1 rewrite of pi's TypeScript agent stack (`agent` v0.87.1 with its `ai`, `chord`, and `telemetry` closures, plus the `coding-agent` CLI and its `tui` dependency; commit `ff72faba2`). Packages mirror the source in name and behavior; npm dependencies become standalone Go packages; layering matches the reference.
 
 ## Module map
 
@@ -21,6 +21,9 @@ telemetry/    Span contract, NOOP / in-memory contexts
 chord/        JSON contracts, context/, delta/, services/
 ai/           Types, streaming, retry, catalog, providers
 agent/        Agent loop, proxy, search, harness/ and tools
+tui/          pi-tui port: components, keys, diff renderer ([module](modules/tui.md))
+codingagent/  coding-agent CLI port: sessions, tools, modes ([module](modules/codingagent.md))
+cmd/          openagent / openagent-rpc binaries
 trajectory/   Run-record logs ([module](modules/trajectory.md))
 examples/     Runnable example agents
 ```
@@ -29,12 +32,13 @@ examples/     Runnable example agents
 
 - **Provider stream:** a turn calls an `ai` provider over the HTTP/SSE seam (`http_sse.go`); codec, retry, and transcript shape the abort-aware events into messages.
 - **Agent loop:** turn → model events → tool calls → tool results → next turn, until a final message or abort.
-- **State delta:** `chord/delta` ops apply over the `jsonx` model, keeping ordering and number formatting JavaScript-identical.
+- **Coding agent:** `codingagent` drives the ported agent loop with its own sessions (JSONL), tools, compaction, and extension runner across print, JSON-event, RPC, and interactive modes.- **State delta:** `chord/delta` ops apply over the `jsonx` model, keeping ordering and number formatting JavaScript-identical.
 
 ## Extension points
 
 - **Providers:** implement the provider core in `ai/`, register with its catalog entry.
-- **Tools:** define tools in `agent/harness/tools`; the loop's dispatch calls them.
+- **Tools:** define tools in `agent/harness/tools` or `codingagent/core/tools`; the loop's dispatch calls them.
+- **Extensions:** `codingagent`'s extension API is Go-native; runtime TypeScript loading is a documented deviation (PARITY.md).
 - **Telemetry:** span schemas via `telemetry/` contexts; NOOP and in-memory ship.
 - **Trajectory:** run records via `trajectory/` ([module](modules/trajectory.md)).
 

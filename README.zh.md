@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-pi agent 技术栈的 Go 1:1 重写——`agent`、`ai`、`chord`、`telemetry` 各包及其依赖闭包（TypeBox、jsdiff、ignore、partial-json 均重写为纯 Go）——保持模块命名、行为与 JavaScript JSON 语义一致。[PORTING.md](PORTING.md) 跟踪移植阶段；[PARITY.md](PARITY.md) 逐文件审计与 TypeScript 基准的对齐状态。
+pi agent 技术栈的 Go 1:1 重写——`agent`、`ai`、`chord`、`telemetry` 各包及其依赖闭包（TypeBox、jsdiff、ignore、partial-json 均重写为纯 Go）、coding-agent CLI 及其 `tui` 依赖，以及 MCP 客户端栈（stdio 与 Streamable HTTP 传输、OAuth 登录；`openagent mcp` 管理服务器）——保持模块命名、行为与 JavaScript JSON 语义一致。[PORTING.md](PORTING.md) 跟踪移植阶段；[PARITY.md](PARITY.md) 逐文件审计与 TypeScript 基准的对齐状态。
 
 ## 从这里开始
 

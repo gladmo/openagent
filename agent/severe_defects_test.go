@@ -152,3 +152,36 @@ func TestParallelToolListenersStaySerialized(t *testing.T) {
 		t.Fatalf("prompt error: %v", err)
 	}
 }
+
+func TestNilStreamFromProviderFailsLoudNotPanic(t *testing.T) {
+	// A provider with no transport returns a nil stream; the loop must
+	// surface a failed turn instead of dereferencing it.
+	config := &AgentLoopConfig{Model: testModel(), ConvertToLlm: identityConverter}
+	nilStreamFn := func(_ *ai.Model, _ *ai.TranscriptContext, _ *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		return nil
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("loop panicked on a nil stream: %v", r)
+		}
+	}()
+	messages, err := RunAgentLoop([]AgentMessage{testUser("hi")}, &AgentContext{Messages: []AgentMessage{}}, config, func(AgentEvent) {}, nil, nilStreamFn)
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	var assistant *ai.AssistantMessage
+	for _, message := range messages {
+		if candidate, ok := message.(*ai.AssistantMessage); ok {
+			assistant = candidate
+		}
+	}
+	if assistant == nil {
+		t.Fatalf("no assistant message in %d messages", len(messages))
+	}
+	if assistant.StopReason != ai.StopError {
+		t.Fatalf("stop reason = %q, want error", assistant.StopReason)
+	}
+	if assistant.ErrorMessage == nil || !strings.Contains(*assistant.ErrorMessage, "No stream returned") {
+		t.Fatalf("error message = %v", assistant.ErrorMessage)
+	}
+}

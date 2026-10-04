@@ -143,3 +143,97 @@
   membrane/tracker 采用文档化的 Go 等价物（句柄守卫/键差分）；运行时供应商流经
   ai.Provider 流式面注入。逐文件差异记录于 `PORTING.md` 各轮条目。
 - 接续点与逐轮记录见 `PORTING.md`。
+
+## MCP 移植：pi/packages/mcp @ a276dabe5（M0–M2）✅🟡
+
+基准例外：MCP 栈取自 `a276dabe5`（用户指定的区间 `ff72faba2..a276dabe5` 的核心功能），其余树仍钉定 `ff72faba2`。决策与分层见 [Agent Note](.agents/notes/implemented/architecture/2026-10-14-mcp-port-ahead-of-baseline.md)。
+
+### mcp/ 包（M0）✅ 全量
+
+pi/packages/mcp（31 文件 ≈ 4.9K 行 TS + 测试）→ `mcp/`（16 文件 ≈ 6.9K 行 Go，32 测试）。
+
+| 参考文件 | Go 位置 | 状态 | 备注 |
+|---|---|---|---|
+| protocol/jsonrpc.ts | `jsonrpc.go` | ✅ | jsonx 对象承载消息；ID 结构体等值 |
+| protocol/types.ts + content.ts | `protocol.go` | ✅ | 类型化视图保留 Raw 透传；ToLlmContent |
+| transports/transport.ts | `transport.go` | ✅ | 监听器经条目指针身份（Go 函数不可比较）|
+| transports/in-memory.ts | `inmemory.go` | ✅ | queueMicrotask → goroutine 投递 |
+| transports/stdio.ts | `stdio.go` + `stdio_unix.go`/`stdio_windows.go` | ✅ | 进程组 Setpgid/taskkill；**偏差**：无 process exit 钩子杀存活进程组 |
+| transports/streamable-http.ts | `streamable_http.go` + `sse.go` + `fetch.go` | ✅ | SSE 消费者字节级；fetch 注入抽象（FetchResponse）；TypeError→`IsNetworkError` |
+| client.ts | `client.go` | ✅ | 超时/中止/进度重置；**偏差**：超时 0=继承默认、负=禁用（无 Infinity）|
+| oauth/types.ts | `oauth_types.go` | ✅ | null/"" 视为缺省 |
+| oauth/errors.ts | `oauth_errors.go` | ✅ | |
+| oauth/discovery.ts | `oauth_discovery.go` | ✅ | RFC 8414/OIDC 候选 URL、iss 校验 |
+| oauth/flow.ts | `oauth_flow.go` | ✅ | PKCE、DCR、刷新、iss 守卫、step-up、`AdaptOAuthProvider`（结构体函数字段）|
+| oauth/provider.ts | `oauth_provider.go` | ✅ | 状态序列化 ToObj/FromObj |
+| oauth/callback.ts | `oauth_callback.go` | ✅ | 回环服务器 + WaitForCallback 结果信道 |
+| auth-provider.ts | `fetch.go`（AuthProvider）| ✅ | 可选方法 → 函数字段 |
+| index.ts | `doc.go` + 各文件 | ✅ | 包级导出即 barrel |
+
+### codingagent MCP 运行时（M1）✅ 全量
+
+| 参考文件 | Go 位置 | 状态 | 备注 |
+|---|---|---|---|
+| core/mcp-servers.ts | `mcp_servers.go` | ✅ | 校验/别名解析/命名空间冲突/注册表 |
+| extensions/mcp/config.ts | `mcp_config.go` | ✅ | 全局+项目合并、覆盖键约束、缩进保留编辑 |
+| extensions/mcp/log.ts | `mcp_log.go` | ✅ | 追加 + 5MB 轮转 |
+| extensions/mcp/oauth.ts | `mcp_oauth.go` + `mcp_file_lock.go` | ✅ | 键=名\|URL、legacy 迁移、刷新锁（**偏差**：proper-lockfile → O_EXCL+mtime 过期接管）|
+| extensions/mcp/tools.ts | `mcp_tools.go` | ✅ 转换层 | 命名/截断/转换/schema；ToolDefinition 包装随 CA6 |
+| extensions/mcp/resources.ts | `mcp_resources.go` | ✅ 辅助层 | MCP App 过滤；三个资源工具定义随 CA6 |
+| extensions/mcp/runtime.ts | `mcp_runtime.go` | ✅ | 重连/会话过期重试/瞬时重试/needs-auth；**偏差**：clientInfo 发 AppName()/Version()（参考发 "pi"）|
+| extensions/mcp/cli.ts | `mcp_cli.go` + `cmd/openagent` | ✅ | add/remove/list/login/logout；readline 提示经 bufio |
+
+支撑新增：`ai/oauth_page.go`（pi-ai utils/oauth-page.ts @ a276dabe）、`TruncateMiddle`（truncate.ts）、`AgentToolResult.StructuredContent/IsError`（agent types.ts @ a276dabe，isError 并入结果终结）。
+
+### M2 扩展接线 ⬜（文档化缺口）
+
+`extensions/mcp/index.ts` + `ui.ts` 未移植：依赖 CA4/CA6 的扩展事件宿主（session_start/before_agent_start/tool_call/turn_start/mcp_servers_change/session_shutdown）、ToolDefinition exposure/namespace/outputSchema 字段、setActiveTools、codemode/tool_search 扩展、模型注册表 provider 令牌查询、`/mcp` TUI 管理器。`tools.ts`/`resources.ts` 的 ToolDefinition 包装与渲染器同批落地。
+
+## 扩展移植：pi/packages/tui（CA1）✅
+
+基准：pi-tui v0.87.1 @ `ff72faba2`（43 文件 ≈ 18.8K 行 + 48 个 node:test）→ `tui/`（70 文件 ≈ 37.7K 行 Go，261 测试）。决策与阶段见 [PORTING.md](PORTING.md) C 系列与 [Agent Note](.agents/notes/proposed/architecture/2026-09-30-coding-agent-port.md)。
+
+| 源 | 状态 | Go 位置 | 备注 |
+|---|---|---|---|
+| colors/terminal-colors | ✅ | `tui/colors.go` | OKLCH↔sRGB、OSC 10/11 |
+| unicode_data + EAW（生成） | ✅ | `tui/unicode_data.go` 等 | UCD 16.0.0 生成表；GCB/WB/InCB/RGI/EAW |
+| grapheme/word segmenter | ✅ | `tui/grapheme.go` 等 | UAX#29；Intl.Segmenter golden |
+| utils（visibleWidth/truncate/wrap） | ✅ | `tui/utils.go` | OSC-8 跟踪、sliceByColumn |
+| keys/keybindings/stdin-buffer | ✅ | `tui/keys.go` 等 | Kitty CSI-u、legacy；WT_SESSION 歧义 |
+| tui/tui-main-screen（差分渲染） | ✅ | `tui/tui*.go` | 焦点引擎、覆盖层栈、16ms 调度；渲染回调经 defer 重锁（渲染 panic 不再被 "unlock of unlocked mutex" 掩盖）；主屏不实现 ViewportTUI 品牌（对齐参考：仅 alt screen 为 viewport）|
+| tui-alt-screen | ✅ | `tui/tui_alt_screen*.go` | 选区/滚动条/搜索/闪烁/kitty 管理 |
+| 组件（text/stack/box/loader/image/select/settings/input/autocomplete/editor/markdown） | ✅ | `tui/*.go` | editor 2472 行全量（粘贴标记/kill 环/undo/跳字符/粘滞列）+ `EditorOptions.TopBorder` 缝隙（参考 CustomEditor 覆写 renderTopBorder 的 Go 对应）；markdown 渲染器含编辑器修复 |
+| latex + markdown（lexer） | ✅ | `tui/latex*.go` 等 | marked 兼容词法器 27/27 golden；零值 `MarkdownTheme{}` 全样式函数补 identity 默认（此前 nil `ListBullet` 使含列表的回复崩溃）|
+| terminal/terminal-image | ✅ | `tui/terminal*.go` | kitty/sixel/iTerm |
+| native-{modifiers,platform,module-path} | ⬜ | — | NAPI 原生模块：文档化偏差（无 Go 等价物） |
+| index.ts | — | — | 桶文件内联 |
+
+偏差：NAPI 剪贴板 → OSC52 + 命令；ICU CLDR CJK 词典 → 默认 UAX#29 逐字。
+
+## 扩展移植：pi/packages/coding-agent（CA2–CA9）🟡
+
+基准：pi-coding-agent v0.87.1 @ `ff72faba2`（275 文件 ≈ 75.3K 行）→ `codingagent/` + `cmd/openagent`（175 文件 ≈ 61.4K 行 Go，649 测试）。
+
+| 阶段 | 状态 | Go 位置 | 备注 |
+|---|---|---|---|
+| CA2 config + utils | ✅ | `config.go` 等 | 安装方式检测、资源路径、shell/exec/mime、NFD/NFKC 生成表 + golden |
+| CA3 core/tools 执行逻辑 | ✅ | `*_tool.go` 等 | bash/edit/edit-diff/read/write/grep/find/ls/powershell + 截断/输出累加器/mutation 队列；renderers 推迟至 CA8（Theme 依赖） |
+| CA4 settings + 资源 | ✅ | `settings_manager.go` 等 | 双作用域 + 迁移 + 信任门控；skills/prompt-templates/上下文文件（AGENTS.md 发现 + worktree 遮蔽） |
+| CA5 模型栈 + session + compaction | ✅ | `model_*.go` 等 | resolver/runtime/registry/composer；session-manager 2008 行（迁移/树/投影/惰性持久化）；compaction 纯函数核心 + branch-summarization；运行时密钥覆盖（`SetRuntimeApiKey`）对可用性与请求侧鉴权均可见，Refresh 经 `ResolveProviderAuth` 解析存储/运行时凭据；ComposedProvider 委托 base 传输（Stream/StreamSimple/FetchDeferred），无 base 的 models.json-only provider 返回错误流而非 nil |
+| CA6 agent-session 核心 | ✅ | `agent_session*.go`、`session_compaction.go` | 状态机（事件/工具注册表/模型循环/思维级别/排队）+ 系统提示构建 + 压缩全链（准备→LLM 摘要→编排→会话执行/自动阈值）；extensions runner 经 Go 原生 seam；agent 循环对 nil 流 fail loud（provider 无传输时返回失败轮次而非 SIGSEGV） |
+| CA7 无头模式 + CLI + cmd | ✅ | `print_mode.go` 等 | print/json-event/rpc 分发器 + cli args + cmd/openagent 二进制（RPC 端到端验证）；package-manager 核心；cmd 入口 resolveAppMode 对齐 main.ts（TTY 默认 interactive，`-p`/管道 → print），`--list-models` 表格（cli/list-models.ts → `list_models.go`），`--provider/--model/--thinking` 经 resolveCliModel（`model_resolver.go`）接入 print/interactive 会话，`--api-key` 作为运行时覆盖（`SetRuntimeApiKey`，无模型时报参考同款错误）；会话装配 provider-backed StreamFn（`sessionStreamFn`，此前缺失导致任何模式都发不出请求）（CLI 端到端验证：绘制 + /quit + 模型选择 + api-key + 假 provider 全链路请求/鉴权/回复） |
+| CA8 interactive | ✅ | `interactive_mode.go` 等 | theme 核心 + 语法高亮 + export-html（ansi/tool-renderer/zip）+ 扩展运行器核心 + 驱动器（输入分发/agent 事件流渲染/真实运行/状态页脚布局）+ 26/43 组件（assistant-message/tool-execution/bash-execution/footer/model-selector/login-dialog/摘要组件/custom 组件/first-time-setup/oauth-selector 等）+ 关键命令（/compact /new /thinking /model /export /name /session /quit）；17 个选择器类组件经缝合（tree/config/session/settings/scoped-models/armin/mermaid 等，见偏差）；组件树按参考重组：document(header/loaded-resources/chat) + dock(status/editor/footer) 经 `mountInteractiveTui` 挂载，`chat_viewport.go` 提供全屏 ScrollView(follow-end/primary) 根；编辑器挂载进 editorContainer（此前漏挂，输入框不可见）；启动头部（logo/键位提示/引导，`quietStartup` 门控），其提示与 `interactive_keys.go` 的应用级动作表同源，只宣传已实现的键；应用级按键经 `setupKeyHandlers` 接入：escape 中断运行/bash、ctrl+c 清空+双击退出、ctrl+d 空编辑器退出、ctrl+o 展开工具输出与启动帮助、shift+tab 思维级别循环、ctrl+p/ctrl+n 模型循环；运行态经 `status_indicator.go` 嵌入编辑器上边框（对应 CustomEditor.renderTopBorder）；助手文本/思考块按值/指针双形式渲染 |
+| CA9 experimental | ⬜ | — | **文档化偏差**：范围决定（最小可用核心）— client-tui/server/radius-relay/coordinator/micro/mini（52 文件 10.7K 行）未移植 |
+
+**范围决定后的文档化缺口**（最小可用核心收口）：
+- 17 个选择器类交互组件（6.2K 行：tree-selector 1435/config-selector 942/scoped-models 401/armin 382/mermaid/settings-submenu 等）——对应命令保持缝合消息
+- extensions/ 加载器与 types 余量（4.5K 行：loader 799/types/index/llama 578）——runner 核心与注册面已移植
+- experimental/ 全部（CA9，10.7K 行）
+- bash 运行中中断（`AbortBash` 为桩）与 `!` bash 的 transcript 渲染块（当前经 statusLine 显示输出）；resource-loader（1184，启动期「已加载资源」段落与 skills/prompts 自动发现依赖它）、sdk.ts（454）、cache-warmer（453）、migrations（315）、rpc-client（617）、startup-ui/theme-controller/changelog（655）
+- remote-catalog 刷新与 radius 提供者槽位
+
+计划内偏差（[Note](.agents/notes/proposed/architecture/2026-09-30-coding-agent-port.md)）：
+- jiti 运行时 TS 扩展求值 → Go 原生 ExtensionAPI；loader 保留发现/清单校验，TS-only 扩展 loud 失败。
+- photon WASM 图像管线 → Go `image`（行为对齐：尺寸/格式/EXIF）；highlight.js/marked/grok-mermaid → 最小子集或占位。
+- `bun/` 运行时文件无 Go 等价物（cmd 入口替代）；npm 依赖 semver/minimatch/proper-lockfile → `semver/`/`minimatch/`/`lockfile/` 手移植包。
+- TS 跨目录 import 环 → 共享类型下沉 `codingagent/shared/`（首例 source-info）。

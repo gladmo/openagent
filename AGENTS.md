@@ -1,6 +1,6 @@
 # AGENTS.md
 
-openagent — a Go 1:1 rewrite of the pi agent stack (`agent` v0.87.1 plus its `ai`, `chord`, and `telemetry` closures). Read [docs/architecture.md](docs/architecture.md) before changing `agent/` or `ai/`; follow [docs/AGENTS.md](docs/AGENTS.md) for documentation.
+openagent — a Go 1:1 rewrite of the pi agent stack (`agent` v0.87.1 plus its `ai`, `chord`, and `telemetry` closures, and the `coding-agent` CLI with its `tui` dependency). Read [docs/architecture.md](docs/architecture.md) before changing `agent/`, `ai/`, `tui/`, or `codingagent/`; follow [docs/AGENTS.md](docs/AGENTS.md) for documentation.
 
 ## Stability
 
@@ -13,12 +13,16 @@ agent/       Agent loop, proxy, search, harness, and tools
 ai/          Model-agnostic provider stack: types, events, retry, catalog, providers
 chord/       Shared contracts: JSON model, context chain, delta ops, services
 telemetry/   Span telemetry with NOOP and in-memory contexts
+mcp/         MCP client (pi @ a276dabe5): transports, OAuth
+tui/         Ported pi-tui terminal UI library: components, diff renderer, keys
+codingagent/ Ported pi coding-agent CLI: sessions, tools, extensions, modes
+cmd/         Binary entries: openagent (CLI), openagent-rpc
 abort/       AbortSignal/AbortController shim, nil-safe
-jsonx/ typebox/ partialjson/ diff/ ignore/   Ported npm libraries, JS semantics preserved
+jsonx/ typebox/ partialjson/ diff/ ignore/ minimatch/   Ported npm libraries, JS semantics preserved
 examples/    Runnable example agents
-docs/        Documentation; the tier standard lives in docs/AGENTS.md
-scripts/     Zero-dependency verification gates (scripts/AGENTS.md)
-.agents/     Agent workflows and decision records (.agents/notes/README.md)
+docs/        Documentation; tier standard: docs/AGENTS.md
+scripts/     Verification gates (scripts/AGENTS.md)
+.agents/     Workflows and decision records (.agents/notes/README.md)
 ```
 
 ## Commands

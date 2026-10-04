@@ -2,3 +2,7 @@
 .codegraph
 .gocache
 data_query_agent
+
+# build artifacts
+/openagent
+/openagent.exe

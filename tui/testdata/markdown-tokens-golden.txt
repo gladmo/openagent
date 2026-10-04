@@ -1,0 +1,1152 @@
+---CASE---
+INPUT:# Hello world
+[
+ {
+  "type": "heading",
+  "raw": "# Hello world",
+  "text": "Hello world",
+  "depth": 1,
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "Hello world",
+    "text": "Hello world"
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:## Sub heading
+[
+ {
+  "type": "heading",
+  "raw": "## Sub heading",
+  "text": "Sub heading",
+  "depth": 2,
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "Sub heading",
+    "text": "Sub heading"
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:### Deep
+[
+ {
+  "type": "heading",
+  "raw": "### Deep",
+  "text": "Deep",
+  "depth": 3,
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "Deep",
+    "text": "Deep"
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:Plain paragraph text.
+[
+ {
+  "type": "paragraph",
+  "raw": "Plain paragraph text.",
+  "text": "Plain paragraph text.",
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "Plain paragraph text.",
+    "text": "Plain paragraph text."
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:- one
+[
+ {
+  "type": "list",
+  "raw": "- one",
+  "ordered": false,
+  "start": "",
+  "loose": false,
+  "items": [
+   {
+    "type": "list_item",
+    "raw": "- one",
+    "text": "one",
+    "loose": false,
+    "task": false,
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "one",
+      "text": "one",
+      "tokens": [
+       {
+        "type": "text",
+        "raw": "one",
+        "text": "one"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:- two
+[
+ {
+  "type": "list",
+  "raw": "- two",
+  "ordered": false,
+  "start": "",
+  "loose": false,
+  "items": [
+   {
+    "type": "list_item",
+    "raw": "- two",
+    "text": "two",
+    "loose": false,
+    "task": false,
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "two",
+      "text": "two",
+      "tokens": [
+       {
+        "type": "text",
+        "raw": "two",
+        "text": "two"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:- three
+[
+ {
+  "type": "list",
+  "raw": "- three",
+  "ordered": false,
+  "start": "",
+  "loose": false,
+  "items": [
+   {
+    "type": "list_item",
+    "raw": "- three",
+    "text": "three",
+    "loose": false,
+    "task": false,
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "three",
+      "text": "three",
+      "tokens": [
+       {
+        "type": "text",
+        "raw": "three",
+        "text": "three"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:1. first
+[
+ {
+  "type": "list",
+  "raw": "1. first",
+  "ordered": true,
+  "start": 1,
+  "loose": false,
+  "items": [
+   {
+    "type": "list_item",
+    "raw": "1. first",
+    "text": "first",
+    "loose": false,
+    "task": false,
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "first",
+      "text": "first",
+      "tokens": [
+       {
+        "type": "text",
+        "raw": "first",
+        "text": "first"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:2. second
+[
+ {
+  "type": "list",
+  "raw": "2. second",
+  "ordered": true,
+  "start": 2,
+  "loose": false,
+  "items": [
+   {
+    "type": "list_item",
+    "raw": "2. second",
+    "text": "second",
+    "loose": false,
+    "task": false,
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "second",
+      "text": "second",
+      "tokens": [
+       {
+        "type": "text",
+        "raw": "second",
+        "text": "second"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:- a
+[
+ {
+  "type": "list",
+  "raw": "- a",
+  "ordered": false,
+  "start": "",
+  "loose": false,
+  "items": [
+   {
+    "type": "list_item",
+    "raw": "- a",
+    "text": "a",
+    "loose": false,
+    "task": false,
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "a",
+      "text": "a",
+      "tokens": [
+       {
+        "type": "text",
+        "raw": "a",
+        "text": "a"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:  - a1
+[
+ {
+  "type": "list",
+  "raw": "  - a1",
+  "ordered": false,
+  "start": "",
+  "loose": false,
+  "items": [
+   {
+    "type": "list_item",
+    "raw": "  - a1",
+    "text": "a1",
+    "loose": false,
+    "task": false,
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "a1",
+      "text": "a1",
+      "tokens": [
+       {
+        "type": "text",
+        "raw": "a1",
+        "text": "a1"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:  - a2
+[
+ {
+  "type": "list",
+  "raw": "  - a2",
+  "ordered": false,
+  "start": "",
+  "loose": false,
+  "items": [
+   {
+    "type": "list_item",
+    "raw": "  - a2",
+    "text": "a2",
+    "loose": false,
+    "task": false,
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "a2",
+      "text": "a2",
+      "tokens": [
+       {
+        "type": "text",
+        "raw": "a2",
+        "text": "a2"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:- b
+[
+ {
+  "type": "list",
+  "raw": "- b",
+  "ordered": false,
+  "start": "",
+  "loose": false,
+  "items": [
+   {
+    "type": "list_item",
+    "raw": "- b",
+    "text": "b",
+    "loose": false,
+    "task": false,
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "b",
+      "text": "b",
+      "tokens": [
+       {
+        "type": "text",
+        "raw": "b",
+        "text": "b"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:*em* and **strong** and `code` and ~~del~~
+[
+ {
+  "type": "paragraph",
+  "raw": "*em* and **strong** and `code` and ~~del~~",
+  "text": "*em* and **strong** and `code` and ~~del~~",
+  "tokens": [
+   {
+    "type": "em",
+    "raw": "*em*",
+    "text": "em",
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "em",
+      "text": "em"
+     }
+    ]
+   },
+   {
+    "type": "text",
+    "raw": " and ",
+    "text": " and "
+   },
+   {
+    "type": "strong",
+    "raw": "**strong**",
+    "text": "strong",
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "strong",
+      "text": "strong"
+     }
+    ]
+   },
+   {
+    "type": "text",
+    "raw": " and ",
+    "text": " and "
+   },
+   {
+    "type": "codespan",
+    "raw": "`code`",
+    "text": "code"
+   },
+   {
+    "type": "text",
+    "raw": " and ",
+    "text": " and "
+   },
+   {
+    "type": "del",
+    "raw": "~~del~~",
+    "text": "del",
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "del",
+      "text": "del"
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:> quoted text
+[
+ {
+  "type": "blockquote",
+  "raw": "> quoted text",
+  "text": "quoted text",
+  "tokens": [
+   {
+    "type": "paragraph",
+    "raw": "quoted text",
+    "text": "quoted text",
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "quoted text",
+      "text": "quoted text"
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:> more quote
+[
+ {
+  "type": "blockquote",
+  "raw": "> more quote",
+  "text": "more quote",
+  "tokens": [
+   {
+    "type": "paragraph",
+    "raw": "more quote",
+    "text": "more quote",
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "more quote",
+      "text": "more quote"
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:---
+[
+ {
+  "type": "hr",
+  "raw": "---"
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:```
+[
+ {
+  "type": "code",
+  "raw": "```",
+  "text": "",
+  "lang": ""
+ }
+]
+---CASE---
+INPUT:code block
+[
+ {
+  "type": "paragraph",
+  "raw": "code block",
+  "text": "code block",
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "code block",
+    "text": "code block"
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:```
+[
+ {
+  "type": "code",
+  "raw": "```",
+  "text": "",
+  "lang": ""
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:```go
+[
+ {
+  "type": "code",
+  "raw": "```go",
+  "text": "",
+  "lang": "go"
+ }
+]
+---CASE---
+INPUT:fmt.Println("hi")
+[
+ {
+  "type": "paragraph",
+  "raw": "fmt.Println(\"hi\")",
+  "text": "fmt.Println(\"hi\")",
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "fmt.Println(\"hi\")",
+    "text": "fmt.Println(\"hi\")"
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:```
+[
+ {
+  "type": "code",
+  "raw": "```",
+  "text": "",
+  "lang": ""
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:| A | B |
+[
+ {
+  "type": "paragraph",
+  "raw": "| A | B |",
+  "text": "| A | B |",
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "| A | B |",
+    "text": "| A | B |"
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:|---|---|
+[
+ {
+  "type": "paragraph",
+  "raw": "|---|---|",
+  "text": "|---|---|",
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "|---|---|",
+    "text": "|---|---|"
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:| 1 | 2 |
+[
+ {
+  "type": "paragraph",
+  "raw": "| 1 | 2 |",
+  "text": "| 1 | 2 |",
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "| 1 | 2 |",
+    "text": "| 1 | 2 |"
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:| 3 | 4 |
+[
+ {
+  "type": "paragraph",
+  "raw": "| 3 | 4 |",
+  "text": "| 3 | 4 |",
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "| 3 | 4 |",
+    "text": "| 3 | 4 |"
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:Text with [link](http://x.com) inside.
+[
+ {
+  "type": "paragraph",
+  "raw": "Text with [link](http://x.com) inside.",
+  "text": "Text with [link](http://x.com) inside.",
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "Text with ",
+    "text": "Text with "
+   },
+   {
+    "type": "link",
+    "raw": "[link](http://x.com)",
+    "text": "link",
+    "href": "http://x.com",
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "link",
+      "text": "link"
+     }
+    ]
+   },
+   {
+    "type": "text",
+    "raw": " inside.",
+    "text": " inside."
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:$$x^2$$ inline block
+[
+ {
+  "type": "latexBlock",
+  "raw": "$$x^2$$ inline block",
+  "text": "x^2$$ inline block",
+  "pending": true
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:$inline math$
+[
+ {
+  "type": "paragraph",
+  "raw": "$inline math$",
+  "text": "$inline math$",
+  "tokens": [
+   {
+    "type": "latex",
+    "raw": "$inline math$",
+    "text": "inline math"
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:Escaped \*not em\*
+[
+ {
+  "type": "paragraph",
+  "raw": "Escaped \\*not em\\*",
+  "text": "Escaped \\*not em\\*",
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "Escaped ",
+    "text": "Escaped "
+   },
+   {
+    "type": "escape",
+    "raw": "\\*",
+    "text": "*"
+   },
+   {
+    "type": "text",
+    "raw": "not em",
+    "text": "not em"
+   },
+   {
+    "type": "escape",
+    "raw": "\\*",
+    "text": "*"
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:- [ ] todo
+[
+ {
+  "type": "list",
+  "raw": "- [ ] todo",
+  "ordered": false,
+  "start": "",
+  "loose": false,
+  "items": [
+   {
+    "type": "list_item",
+    "raw": "- [ ] todo",
+    "text": "todo",
+    "loose": false,
+    "task": true,
+    "checked": false,
+    "tokens": [
+     {
+      "type": "checkbox",
+      "raw": "[ ] ",
+      "checked": false
+     },
+     {
+      "type": "text",
+      "raw": "todo",
+      "text": "todo",
+      "tokens": [
+       {
+        "type": "text",
+        "raw": "todo",
+        "text": "todo"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:- [x] done
+[
+ {
+  "type": "list",
+  "raw": "- [x] done",
+  "ordered": false,
+  "start": "",
+  "loose": false,
+  "items": [
+   {
+    "type": "list_item",
+    "raw": "- [x] done",
+    "text": "done",
+    "loose": false,
+    "task": true,
+    "checked": true,
+    "tokens": [
+     {
+      "type": "checkbox",
+      "raw": "[x] ",
+      "checked": true
+     },
+     {
+      "type": "text",
+      "raw": "done",
+      "text": "done",
+      "tokens": [
+       {
+        "type": "text",
+        "raw": "done",
+        "text": "done"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:loose
+[
+ {
+  "type": "paragraph",
+  "raw": "loose",
+  "text": "loose",
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "loose",
+    "text": "loose"
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:- list
+[
+ {
+  "type": "list",
+  "raw": "- list",
+  "ordered": false,
+  "start": "",
+  "loose": false,
+  "items": [
+   {
+    "type": "list_item",
+    "raw": "- list",
+    "text": "list",
+    "loose": false,
+    "task": false,
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "list",
+      "text": "list",
+      "tokens": [
+       {
+        "type": "text",
+        "raw": "list",
+        "text": "list"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:- items
+[
+ {
+  "type": "list",
+  "raw": "- items",
+  "ordered": false,
+  "start": "",
+  "loose": false,
+  "items": [
+   {
+    "type": "list_item",
+    "raw": "- items",
+    "text": "items",
+    "loose": false,
+    "task": false,
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "items",
+      "text": "items",
+      "tokens": [
+       {
+        "type": "text",
+        "raw": "items",
+        "text": "items"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:1. a
+[
+ {
+  "type": "list",
+  "raw": "1. a",
+  "ordered": true,
+  "start": 1,
+  "loose": false,
+  "items": [
+   {
+    "type": "list_item",
+    "raw": "1. a",
+    "text": "a",
+    "loose": false,
+    "task": false,
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "a",
+      "text": "a",
+      "tokens": [
+       {
+        "type": "text",
+        "raw": "a",
+        "text": "a"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:   continued para
+[
+ {
+  "type": "paragraph",
+  "raw": "   continued para",
+  "text": "   continued para",
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "   continued para",
+    "text": "   continued para"
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:2. b
+[
+ {
+  "type": "list",
+  "raw": "2. b",
+  "ordered": true,
+  "start": 2,
+  "loose": false,
+  "items": [
+   {
+    "type": "list_item",
+    "raw": "2. b",
+    "text": "b",
+    "loose": false,
+    "task": false,
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "b",
+      "text": "b",
+      "tokens": [
+       {
+        "type": "text",
+        "raw": "b",
+        "text": "b"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:| Left | Center | Right |
+[
+ {
+  "type": "paragraph",
+  "raw": "| Left | Center | Right |",
+  "text": "| Left | Center | Right |",
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "| Left | Center | Right |",
+    "text": "| Left | Center | Right |"
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:|:-----|:------:|------:|
+[
+ {
+  "type": "paragraph",
+  "raw": "|:-----|:------:|------:|",
+  "text": "|:-----|:------:|------:|",
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "|:-----|:------:|------:|",
+    "text": "|:-----|:------:|------:|"
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:| 1 | 2 | 3 |
+[
+ {
+  "type": "paragraph",
+  "raw": "| 1 | 2 | 3 |",
+  "text": "| 1 | 2 | 3 |",
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "| 1 | 2 | 3 |",
+    "text": "| 1 | 2 | 3 |"
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:Auto <http://example.com> link
+[
+ {
+  "type": "paragraph",
+  "raw": "Auto <http://example.com> link",
+  "text": "Auto <http://example.com> link",
+  "tokens": [
+   {
+    "type": "text",
+    "raw": "Auto ",
+    "text": "Auto "
+   },
+   {
+    "type": "link",
+    "raw": "<http://example.com>",
+    "text": "http://example.com",
+    "href": "http://example.com",
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "http://example.com",
+      "text": "http://example.com"
+     }
+    ]
+   },
+   {
+    "type": "text",
+    "raw": " link",
+    "text": " link"
+   }
+  ]
+ }
+]
+---CASE---
+INPUT:
+[]
+---CASE---
+INPUT:user@example.com bare
+[
+ {
+  "type": "paragraph",
+  "raw": "user@example.com bare",
+  "text": "user@example.com bare",
+  "tokens": [
+   {
+    "type": "link",
+    "raw": "user@example.com",
+    "text": "user@example.com",
+    "href": "mailto:user@example.com",
+    "tokens": [
+     {
+      "type": "text",
+      "raw": "user@example.com",
+      "text": "user@example.com"
+     }
+    ]
+   },
+   {
+    "type": "text",
+    "raw": " bare",
+    "text": " bare"
+   }
+  ]
+ }
+]

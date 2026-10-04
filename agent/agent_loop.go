@@ -487,6 +487,16 @@ func streamAssistantResponse(
 	options.Signal = signal
 
 	response := streamFunction(config.Model, llmContext, &options)
+	if response == nil {
+		// A provider without a stream transport must surface as a failed
+		// turn, never as a nil dereference.
+		provider := ""
+		if config.Model != nil {
+			provider = config.Model.Provider
+		}
+		text := fmt.Sprintf("No stream returned for provider %q (missing provider transport).", provider)
+		return &ai.AssistantMessage{StopReason: ai.StopError, ErrorMessage: &text}, nil
+	}
 
 	var partialMessage *ai.AssistantMessage
 	addedPartial := false
@@ -884,7 +894,7 @@ func finalizeExecutedToolCall(
 	signal *abort.Signal,
 ) finalizedToolCallOutcome {
 	result := executed.result
-	isError := executed.isError
+	isError := executed.isError || result.IsError
 
 	if config.AfterToolCall != nil {
 		afterResult, err := config.AfterToolCall(&AfterToolCallContext{

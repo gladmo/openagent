@@ -580,3 +580,57 @@ func MustParseString(s string) any {
 	}
 	return v
 }
+
+// MarshalJSON renders the object as a JSON object with insertion-ordered
+// keys (mirrors JSON.stringify of a JS object).
+func (o *Obj) MarshalJSON() ([]byte, error) {
+	var b []byte
+	b = append(b, '{')
+	for i, key := range o.keys {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		keyJSON, err := json.Marshal(key)
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, keyJSON...)
+		b = append(b, ':')
+		valueJSON, err := json.Marshal(o.m[key])
+		if err != nil {
+			return nil, err
+		}
+		b = append(b, valueJSON...)
+	}
+	b = append(b, '}')
+	return b, nil
+}
+
+// UnmarshalJSON loads a JSON object preserving key order.
+func (o *Obj) UnmarshalJSON(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if delim, ok := token.(json.Delim); !ok || delim != '{' {
+		return fmt.Errorf("jsonx: expected object, got %v", token)
+	}
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return fmt.Errorf("jsonx: expected string key, got %v", keyToken)
+		}
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+		o.Set(key, value)
+	}
+	_, err = decoder.Token()
+	return err
+}

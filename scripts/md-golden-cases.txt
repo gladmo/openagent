@@ -1,0 +1,68 @@
+# Hello world
+## Sub heading
+### Deep
+
+Plain paragraph text.
+
+- one
+- two
+- three
+
+1. first
+2. second
+
+- a
+  - a1
+  - a2
+- b
+
+*em* and **strong** and `code` and ~~del~~
+
+> quoted text
+> more quote
+
+---
+
+```
+code block
+```
+
+```go
+fmt.Println("hi")
+```
+
+| A | B |
+|---|---|
+| 1 | 2 |
+| 3 | 4 |
+
+Text with [link](http://x.com) inside.
+
+$$x^2$$ inline block
+
+$inline math$
+
+Escaped \*not em\*
+
+- [ ] todo
+- [x] done
+
+loose
+
+- list
+
+- items
+
+1. a
+
+   continued para
+
+2. b
+
+| Left | Center | Right |
+|:-----|:------:|------:|
+| 1 | 2 | 3 |
+
+Auto <http://example.com> link
+
+user@example.com bare
