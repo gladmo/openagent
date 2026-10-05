@@ -24,9 +24,14 @@ type AgentHarnessOptions struct {
 	ThinkingLevel   string
 	ActiveToolNames []string
 	SystemPrompt    string
-	SteeringMode    string
-	FollowUpMode    string
-	ToolExecution   string
+	// Resources carries loaded skills and prompt templates into run
+	// admission (skill/template requests resolve against them). Loading
+	// stays with harness.LoadSkills/LoadSourcedSkills in the caller.
+	Resources    harness.AgentHarnessResources
+	SteeringMode string
+	FollowUpMode string
+	// ToolExecution is "sequential" | "parallel" (default parallel).
+	ToolExecution string
 }
 
 // LaneInfo mirrors the TS interface.
@@ -41,6 +46,7 @@ type AgentHarness struct {
 	mu      sync.RWMutex
 	session session.Session
 	options AgentHarnessOptions
+	config  *runtime.Config
 	lanes   map[string]*runtime.Lane
 	closed  bool
 }
@@ -54,16 +60,46 @@ func CreateAgentHarness(options AgentHarnessOptions) (*AgentHarness, map[string]
 	h := &AgentHarness{
 		session: options.Session,
 		options: options,
+		config:  buildRuntimeConfig(options),
 		lanes:   map[string]*runtime.Lane{},
 	}
 	for name, state := range restored {
-		h.lanes[name] = runtime.NewLane(runtime.LaneOptions{
-			Name:    name,
-			Session: options.Session,
-			State:   state,
-		})
+		h.lanes[name] = h.newLane(name, state)
 	}
 	return h, restored, nil
+}
+
+// buildRuntimeConfig is the config-store seed (harness.ts constructor):
+// option values with the reference defaults resolved at this owning
+// assembly point.
+func buildRuntimeConfig(options AgentHarnessOptions) *runtime.Config {
+	steeringMode := options.SteeringMode
+	if steeringMode == "" {
+		steeringMode = "all"
+	}
+	followUpMode := options.FollowUpMode
+	if followUpMode == "" {
+		followUpMode = "all"
+	}
+	toolExecution := options.ToolExecution
+	if toolExecution == "" {
+		toolExecution = "parallel"
+	}
+	return &runtime.Config{
+		Resources:     options.Resources,
+		SteeringMode:  steeringMode,
+		FollowUpMode:  followUpMode,
+		ToolExecution: toolExecution,
+	}
+}
+
+func (h *AgentHarness) newLane(name string, state *runtime.RuntimeLaneState) *runtime.Lane {
+	return runtime.NewLane(runtime.LaneOptions{
+		Name:       name,
+		Session:    h.session,
+		State:      state,
+		ReadConfig: func() *runtime.Config { return h.config },
+	})
 }
 
 // Lane acquires (or creates) one lane by name.
@@ -103,11 +139,7 @@ func (h *AgentHarness) Lane(name string, ctx harness.Context) (*runtime.Lane, er
 		return nil, err
 	}
 	state := &runtime.RuntimeLaneState{TipID: tip, Configuration: configuration}
-	lane := runtime.NewLane(runtime.LaneOptions{
-		Name:    name,
-		Session: h.session,
-		State:   state,
-	})
+	lane := h.newLane(name, state)
 	h.lanes[name] = lane
 	return lane, nil
 }

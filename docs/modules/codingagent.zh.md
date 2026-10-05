@@ -8,6 +8,7 @@
 
 - `config.go` 解析安装方式、包资产路径（主题、导出模板、交互资产，经 PI_PACKAGE_DIR 覆盖）、package.json 应用标识（名称/版本 → 环境变量名）与 `~/.pi/agent/` 下的用户配置路径（models.json、auth.json、settings.json、sessions）。
 - `settings_manager.go` 以递归深合并合并全局（`~/.pi/agent/settings.json`）与项目（`<cwd>/.pi/settings.json`）作用域，迁移遗留键并做项目信任门控。
+- `package_manager.go` 解析包来源并自动发现技能：项目 `<cwd>/.pi/skills` 与各级祖先的 `.agents/skills`（祖先遍历止于 git 仓库根；两者均受项目信任门控），随后用户 `~/.pi/agent/skills` 与跨工具的 `~/.agents/skills` 池；settings 的 `skills` 模式逐路径门控（`!glob` 排除、`+path` 强制包含、`-path` 强制排除），输出按优先级排序并做规范化去重。
 
 ## 模型栈
 
@@ -43,5 +44,5 @@
 
 - 17 个选择器类交互组件（tree/config/session/settings 选择器、armin、mermaid）经缝合消息；对应命令报告不可用而非打开选择器。
 - 扩展加载器（TS 模块发现/校验）与 `experimental/`（CA9）为最小核心范围决定下的文档化偏差；见 PARITY.md。
-- resource-loader、sdk.ts、cache-warmer、migrations、rpc-client、startup-ui、theme-controller、changelog 未移植；见 PARITY.md 缺口清单。
+- resource-loader（已解析资源的会话接线；extensions/prompts/themes 自动发现与 settings 本地条目随它补齐）、sdk.ts、cache-warmer、migrations、rpc-client、startup-ui、theme-controller、changelog 未移植；见 PARITY.md 缺口清单。
 - remote-catalog 刷新与 radius 提供者为文档化缺口。

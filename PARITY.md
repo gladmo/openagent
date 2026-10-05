@@ -88,7 +88,7 @@
 | transcript.ts | ✅ | 链/事件/有界读/队列解析 |
 | restore.ts | ✅ | 分类/还原/intent 矩阵 |
 | lane.go 命令机 | ✅ | command/settle/continue + DrainEvents |
-| lane accept/queue/abort | ✅ | AcceptRun（收件箱选取+pending 校验+安装写）、QueueMessage/CancelQueued、RequestAbort（幂等+载荷提取）|
+| lane accept/queue/abort | ✅ | AcceptRun（收件箱选取+pending 校验+安装写）、accept 请求分发（RunRequest：prompt 文本/预建消息+images、skill 经 Resources 查找→FormatSkillInvocation、prompt_template→SubstituteArgs；UnknownSkill/UnknownTemplate、pending_assistant 拒绝；LaneOptions.ReadConfig 注入）、QueueMessage/CancelQueued、RequestAbort（幂等+载荷提取）|
 | drive.ts | ✅ | 调度循环（abort-continue 语义）|
 | drive/boundary.ts | ✅ | 规划器 + 事件 |
 | drive/checkpoint.ts | ✅ | startRun/runCheckpoint/finishRunBoundary |
@@ -105,7 +105,7 @@
 | drive/generation.ts | ✅ | prepare/intent/perform/publish 四阶段全量（models_registry + pipeline）|
 | progress.ts | ✅ | 分页 + stillOwns 通道 |
 | navigation 提交 | ✅ | ValidateNavigation + CommitNavigation |
-| agent-harness.ts 门面 | ✅ | 骨架 + lane 获取/配置 + prompt 驱动 + steer/followUp/nextRun/cancel/abort 转发 + watch/resnapshot（facade 包）|
+| agent-harness.ts 门面 | ✅ | 骨架 + lane 获取/配置 + prompt 驱动 + steer/followUp/nextRun/cancel/abort 转发 + watch/resnapshot + Resources 注入（AgentHarnessOptions.Resources → runtime.Config，queue-mode/tool-execution 默认在此解析；Skill/PromptFromTemplate 驱动入口）（facade 包）|
 
 ## pico3（P8）✅ 全量
 
@@ -229,7 +229,7 @@ pi/packages/mcp（31 文件 ≈ 4.9K 行 TS + 测试）→ `mcp/`（16 文件 �
 - 17 个选择器类交互组件（6.2K 行：tree-selector 1435/config-selector 942/scoped-models 401/armin 382/mermaid/settings-submenu 等）——对应命令保持缝合消息
 - extensions/ 加载器与 types 余量（4.5K 行：loader 799/types/index/llama 578）——runner 核心与注册面已移植
 - experimental/ 全部（CA9，10.7K 行）
-- bash 运行中中断（`AbortBash` 为桩）与 `!` bash 的 transcript 渲染块（当前经 statusLine 显示输出）；resource-loader（1184，启动期「已加载资源」段落与 skills/prompts 自动发现依赖它）、sdk.ts（454）、cache-warmer（453）、migrations（315）、rpc-client（617）、startup-ui/theme-controller/changelog（655）
+- bash 运行中中断（`AbortBash` 为桩）与 `!` bash 的 transcript 渲染块（当前经 statusLine 显示输出）；resource-loader（1184，启动期「已加载资源」段落与已解析资源的会话接线 —— resolve() 的 skills 自动发现已移植至 `package_manager.go`：项目 .pi/skills + 祖先 .agents/skills（trust 门控）与用户 agent skills + ~/.agents/skills（跨工具池），extensions/prompts/themes 自动发现与 settings 本地条目仍缺）、sdk.ts（454）、cache-warmer（453）、migrations（315）、rpc-client（617）、startup-ui/theme-controller/changelog（655）
 - remote-catalog 刷新与 radius 提供者槽位
 
 计划内偏差（[Note](.agents/notes/proposed/architecture/2026-09-30-coding-agent-port.md)）：

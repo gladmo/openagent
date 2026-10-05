@@ -149,6 +149,7 @@ type Lane struct {
 	closed      bool
 	closedErr   error
 	onFault     func(err error, ctx harness.Context) error
+	readConfig  func() *Config
 	eventsSink  []HarnessEvent
 }
 
@@ -158,6 +159,10 @@ type LaneOptions struct {
 	Session session.Session
 	State   *RuntimeLaneState
 	OnFault func(err error, ctx harness.Context) error
+	// ReadConfig supplies the admission-time config snapshot (tools,
+	// resources, queue modes). Mirrors the reference constructor's
+	// readConfig injection; nil fails loud at run-request dispatch.
+	ReadConfig func() *Config
 }
 
 // NewLane builds a lane from a restored state.
@@ -168,7 +173,17 @@ func NewLane(options LaneOptions) *Lane {
 		state:       options.State,
 		stateChange: make(chan struct{}, 1),
 		onFault:     options.OnFault,
+		readConfig:  options.ReadConfig,
 	}
+}
+
+// readConfigSnapshot returns the config snapshot or nil when the lane was
+// built without a config source.
+func (l *Lane) readConfigSnapshot() *Config {
+	if l.readConfig == nil {
+		return nil
+	}
+	return l.readConfig()
 }
 
 // State returns the current in-memory state.

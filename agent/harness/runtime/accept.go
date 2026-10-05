@@ -40,6 +40,10 @@ type AcceptResult struct {
 	Busy *LaneBusy
 	// Invalid rejects the request.
 	Invalid *InvalidMessage
+	// UnknownSkill rejects a skill request missing from resources.
+	UnknownSkill *UnknownSkill
+	// UnknownTemplate rejects a template request missing from resources.
+	UnknownTemplate *UnknownTemplate
 	// Admitted carries the installed operation id.
 	Admitted    bool
 	OperationID string

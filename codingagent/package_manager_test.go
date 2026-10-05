@@ -7,6 +7,7 @@ package codingagent
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -116,6 +117,8 @@ func TestPackageManagerGetInstalledPath(t *testing.T) {
 
 func TestPackageManagerResolveManifest(t *testing.T) {
 	manager, _, agentDir := newPackageManager(t)
+	// Isolate ~/.agents/skills so the exact-count assertion stays hermetic.
+	t.Setenv("HOME", filepath.Dir(agentDir))
 
 	// Install a fake package with a pi manifest.
 	installDir := filepath.Join(agentDir, "packages", "npm", "full-pkg")
@@ -212,4 +215,204 @@ func TestPackageManagerProgress(t *testing.T) {
 	// nil callback is a no-op.
 	manager.SetProgressCallback(nil)
 	manager.emitProgress(ProgressEvent{Type: "complete"})
+}
+
+// --- .agents/skills auto-discovery (package-manager.test.ts) ---
+
+func writeSkillFile(t *testing.T, path, name, description string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\nname: " + name + "\ndescription: " + description + "\n---\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func findSkill(result *ResolvedPaths, path string) *ResolvedResource {
+	for i, entry := range result.Skills {
+		if entry.Path == path {
+			return &result.Skills[i]
+		}
+	}
+	return nil
+}
+
+func newResolveManager(t *testing.T, cwd, agentDir string) *PackageManager {
+	t.Helper()
+	os.MkdirAll(cwd, 0o755)
+	os.MkdirAll(agentDir, 0o755)
+	return NewPackageManager(PackageManagerOptions{
+		Cwd: cwd, AgentDir: agentDir,
+		SettingsManager: SettingsManagerCreate(cwd, agentDir, nil),
+	})
+}
+
+func TestPackageManagerResolveAgentsSkillsToGitRoot(t *testing.T) {
+	base := t.TempDir()
+	repoRoot := filepath.Join(base, "repo")
+	nestedCwd := filepath.Join(repoRoot, "packages", "feature")
+	os.MkdirAll(nestedCwd, 0o755)
+	os.MkdirAll(filepath.Join(repoRoot, ".git"), 0o755)
+
+	aboveRepoSkill := filepath.Join(base, ".agents", "skills", "above-repo", "SKILL.md")
+	writeSkillFile(t, aboveRepoSkill, "above-repo", "above")
+	repoRootSkill := filepath.Join(repoRoot, ".agents", "skills", "repo-root", "SKILL.md")
+	writeSkillFile(t, repoRootSkill, "repo-root", "repo")
+	nestedSkill := filepath.Join(repoRoot, "packages", ".agents", "skills", "nested", "SKILL.md")
+	writeSkillFile(t, nestedSkill, "nested", "nested")
+
+	manager := newResolveManager(t, nestedCwd, filepath.Join(base, "agent"))
+	result := manager.Resolve(nil)
+
+	if entry := findSkill(result, repoRootSkill); entry == nil || !entry.Enabled {
+		t.Fatalf("repo-root skill = %+v", entry)
+	}
+	if entry := findSkill(result, nestedSkill); entry == nil || !entry.Enabled {
+		t.Fatalf("nested skill = %+v", entry)
+	}
+	if findSkill(result, aboveRepoSkill) != nil {
+		t.Fatal("above-repo skill discovered")
+	}
+}
+
+func TestPackageManagerResolveAgentsSkillsWithoutGitRepo(t *testing.T) {
+	base := t.TempDir()
+	nestedCwd := filepath.Join(base, "non-repo", "a", "b")
+
+	rootSkill := filepath.Join(base, "non-repo", ".agents", "skills", "root", "SKILL.md")
+	writeSkillFile(t, rootSkill, "root", "root")
+	middleSkill := filepath.Join(base, "non-repo", "a", ".agents", "skills", "middle", "SKILL.md")
+	writeSkillFile(t, middleSkill, "middle", "middle")
+
+	manager := newResolveManager(t, nestedCwd, filepath.Join(base, "agent"))
+	result := manager.Resolve(nil)
+
+	if entry := findSkill(result, rootSkill); entry == nil || !entry.Enabled {
+		t.Fatalf("root skill = %+v", entry)
+	}
+	if entry := findSkill(result, middleSkill); entry == nil || !entry.Enabled {
+		t.Fatalf("middle skill = %+v", entry)
+	}
+}
+
+func TestPackageManagerResolveAgentsSkillsMarkdownModes(t *testing.T) {
+	base := t.TempDir()
+	cwd := filepath.Join(base, "work")
+	os.MkdirAll(cwd, 0o755)
+	agentsSkills := filepath.Join(base, ".agents", "skills")
+
+	rootSkill := filepath.Join(agentsSkills, "root-file.md")
+	writeSkillFile(t, rootSkill, "root-file", "Root markdown file")
+	nestedSkill := filepath.Join(agentsSkills, "nested-skill", "SKILL.md")
+	writeSkillFile(t, nestedSkill, "nested-skill", "Nested skill")
+	nestedMarkdownSkill := filepath.Join(agentsSkills, "third-party", "child-skill.md")
+	writeSkillFile(t, nestedMarkdownSkill, "child-skill", "Nested markdown skill")
+	deeplyNestedSkill := filepath.Join(agentsSkills, "third-party", "vendor", "pack", "deep-skill.md")
+	writeSkillFile(t, deeplyNestedSkill, "deep-skill", "Deeply nested markdown skill")
+
+	manager := newResolveManager(t, cwd, filepath.Join(base, "agent"))
+	result := manager.Resolve(nil)
+
+	if findSkill(result, rootSkill) != nil {
+		t.Fatal("root markdown discovered in agents mode")
+	}
+	for _, path := range []string{nestedSkill, nestedMarkdownSkill, deeplyNestedSkill} {
+		if entry := findSkill(result, path); entry == nil || !entry.Enabled {
+			t.Fatalf("skill %s = %+v", path, entry)
+		}
+	}
+}
+
+func TestPackageManagerResolveAgentsSkillsUserScopeUnderHome(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("HOME", base)
+
+	cwd := filepath.Join(base, "scratch", "nested")
+	os.MkdirAll(cwd, 0o755)
+	agentDir := filepath.Join(base, ".pi", "agent")
+	os.MkdirAll(agentDir, 0o755)
+
+	homeSkill := filepath.Join(base, ".agents", "skills", "home-skill", "SKILL.md")
+	writeSkillFile(t, homeSkill, "home-skill", "home")
+
+	manager := NewPackageManager(PackageManagerOptions{
+		Cwd: cwd, AgentDir: agentDir,
+		SettingsManager: SettingsManagerInMemory(Settings{}, nil),
+	})
+
+	result := manager.Resolve(nil)
+
+	matches := 0
+	var match *ResolvedResource
+	for i, entry := range result.Skills {
+		if entry.Path == homeSkill {
+			matches++
+			match = &result.Skills[i]
+		}
+	}
+	if matches != 1 || match == nil || !match.Enabled {
+		t.Fatalf("home skill matches = %d (%+v)", matches, match)
+	}
+	if match.Metadata.Scope != ScopeUser || match.Metadata.Source != "auto" {
+		t.Fatalf("metadata = %+v", match.Metadata)
+	}
+}
+
+func TestPackageManagerResolveAgentsSkillsSymlinkDedupe(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("HOME", base)
+
+	agentDir := filepath.Join(base, "agent")
+	os.MkdirAll(agentDir, 0o755)
+	agentsSkillsDir := filepath.Join(base, ".agents", "skills")
+	skillPath := filepath.Join(agentsSkillsDir, "foo", "SKILL.md")
+	writeSkillFile(t, skillPath, "foo", "foo")
+
+	if err := os.Symlink(agentsSkillsDir, filepath.Join(agentDir, "skills")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	cwd := filepath.Join(base, "work")
+	manager := newResolveManager(t, cwd, agentDir)
+
+	result := manager.Resolve(nil)
+
+	fooCount := 0
+	for _, entry := range result.Skills {
+		if strings.HasSuffix(filepath.ToSlash(entry.Path), "foo/SKILL.md") {
+			fooCount++
+		}
+	}
+	if fooCount != 1 {
+		t.Fatalf("foo/SKILL.md entries = %d, want 1", fooCount)
+	}
+}
+
+func TestPackageManagerResolveAutoDiscoversRootMarkdownSkills(t *testing.T) {
+	manager, _, agentDir := newPackageManager(t)
+
+	skillFile := filepath.Join(agentDir, "skills", "single-file.md")
+	writeSkillFile(t, skillFile, "single-file", "A root markdown skill")
+
+	result := manager.Resolve(nil)
+	if entry := findSkill(result, skillFile); entry == nil || !entry.Enabled {
+		t.Fatalf("root markdown skill = %+v", entry)
+	}
+}
+
+func TestPackageManagerResolveParentGitignoreDoesNotGatePiDiscovery(t *testing.T) {
+	manager, cwd, _ := newPackageManager(t)
+
+	if err := os.WriteFile(filepath.Join(cwd, ".gitignore"), []byte(".pi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skillPath := filepath.Join(cwd, ConfigDirName(), "skills", "auto-skill", "SKILL.md")
+	writeSkillFile(t, skillPath, "auto-skill", "Auto")
+
+	result := manager.Resolve(nil)
+	if entry := findSkill(result, skillPath); entry == nil || !entry.Enabled {
+		t.Fatalf("auto-discovered skill = %+v", entry)
+	}
 }

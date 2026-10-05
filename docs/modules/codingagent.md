@@ -8,6 +8,7 @@ English | [中文](codingagent.zh.md)
 
 - `config.go` resolves install method, package-asset paths (themes, export templates, interactive assets via PI_PACKAGE_DIR override), app identity from package.json (name/version → env var names), and user config paths under `~/.pi/agent/` (models.json, auth.json, settings.json, sessions).
 - `settings_manager.go` merges global (`~/.pi/agent/settings.json`) and project (`<cwd>/.pi/settings.json`) scopes with recursive deep merge, migration of legacy keys, and project-trust gating.
+- `package_manager.go` resolves package sources plus auto-discovered skills: project `<cwd>/.pi/skills` and every ancestor `.agents/skills` (ancestor walk stops at the git repo root; both project-trust-gated), then user `~/.pi/agent/skills` and the cross-tool `~/.agents/skills` pool; settings `skills` patterns gate each path (`!glob` excludes, `+path` force-includes, `-path` force-excludes), and output orders by precedence with canonical dedupe.
 
 ## Model stack
 
@@ -43,5 +44,5 @@ English | [中文](codingagent.zh.md)
 
 - 17 selector-class interactive components (tree/config/session/settings selectors, armin, mermaid) ride seam messages; their commands report unavailability rather than opening selectors.
 - The extensions loader (TS module discovery/validation) and `experimental/` (CA9) are documented deviations per the minimal-core scope decision; see PARITY.md.
-- resource-loader, sdk.ts, cache-warmer, migrations, rpc-client, startup-ui, theme-controller, and changelog are unported; see PARITY.md's gap list.
+- resource-loader (session wiring for resolved resources; extensions/prompts/themes auto-discovery and settings local entries ride with it), sdk.ts, cache-warmer, migrations, rpc-client, startup-ui, theme-controller, and changelog are unported; see PARITY.md's gap list.
 - remote-catalog refresh and the radius provider are documented gaps.

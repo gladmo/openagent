@@ -3498,3 +3498,40 @@ HIGH fixes: find_tool glob class `[/\]` -> `[/\\]` + fd exit-1 no-results path; 
 Regression tests added (codingagent/ocr_fixes_test.go, tui/ocr_fixes_test.go): value-typed blocks through all three summary paths, ConvertToLlm + ContentText, empty frontmatter, 3-byte JPEG, tool-result bridging (text/image/unknown), Rows/jumpToChar/ ApplyCompletion/loader-nil. All green: 30 packages, gates 7/7, codingagent + tui -race clean.
 
 Remaining ocr findings NOT fixed this round (tracked for follow-up): SessionManager has no internal mutex (concurrent bash-result appends), tui scroll_view/Loader/autocomplete-debounce races, editor byte-vs-rune cursor units, latex parser overflow guards, Windows TTY probe via GetConsoleMode, SendPrompt ascii-only arg parsing, image EXIF orientation pipeline, get_tree shallow serialization, gen-unicode-tables double-escaping (needs regeneration + goldens), auth_storage parse-failure overwrite guard, minimatch globstar segment anchoring.
+
+## SKILLS AUTODISCOVERY ROUND (package-manager resolve() skills slice)
+
+- codingagent/package_manager.go: the skills half of addAutoDiscoveredResources — collectSkillEntries (SKILL.md-first walk; mode "pi" admits root markdown, mode "agents" only nested entries; per-dir ignore files via skills.go addIgnoreRules), findGitRepoRoot + collectAncestorAgentsSkillDirs (cwd upward through git repo root, else filesystem root), settings override matching (getOverridePatterns / normalizeExactPattern / matchesAnyPattern / matchesAnyExactPattern over the minimatch port; !glob exclude, +path force-include, -path force-exclude), isEnabledByOverrides, resourcePrecedenceRank (project local < project auto < user local < user auto < package), skillAccumulator (first record per path wins, stable rank sort, canonical dedupe). Resolve routes manifest + auto-discovered skills through the accumulator: project .pi/skills + ancestor .agents/skills (both trust-gated, home ~/.agents excluded from the project walk) then user agentDir/skills + ~/.agents/skills (unconditional; the cross-tool pool). resolveLocalEntries and extensions/prompts/themes auto-discovery remain with the resolve-completion round; resource-loader wiring (feeding resolved skills into sessions) still pending.
+- Tests (+8, ported from package-manager.test.ts ".agents/skills auto-discovery"): git-root-bounded ancestor walk (above-repo excluded), walk to filesystem root without a repo, agents-mode markdown rules (root .md ignored; nested + deeply nested .md discovered), user-scoped ~/.agents/skills under overridden HOME (exactly once, scope user, source auto), symlink dedupe (agentDir/skills -> ~/.agents/skills), pi-mode root markdown discovery, parent .gitignore not applied to .pi auto-discovery; manifest test isolates HOME for hermetic exact counts.
+- Docs: modules/codingagent(.zh).md configuration bullet + PARITY gap-list update.
+
+## HARNESS RESOURCES ROUND (accept dispatch + facade Resources injection)
+
+- agent/harness/runtime/request_dispatch.go: lane.ts accept()'s request-kind
+  dispatch — RunRequest (prompt text/pre-built messages+images, skill,
+  prompt_template), UnknownSkill/UnknownTemplate admission rejections
+  (AcceptResult fields, mirroring Busy/Invalid), pending_assistant
+  rejection over built messages, then AcceptRun with the config's queue
+  modes. LaneOptions.ReadConfig injects the admission-time config
+  snapshot (reference constructor param); nil fails loud. Skills resolve
+  against Config.Resources (loaded values); loading stays with
+  harness.LoadSkills/LoadSourcedSkills in the caller — no directory
+  policy in the runtime.
+- agent/harness/facade/facade.go: AgentHarnessOptions.Resources (TS
+  resources?: Resources) flows into runtime.Config; queue-mode
+  ("all") and tool-execution ("parallel") defaults resolved at this
+  owning assembly point (harness.ts configStore seed); lanes built via
+  ReadConfig. prompt.go adds Skill/PromptFromTemplate drive entries
+  (driveRunRequest: dispatch-admit then drive to settlement).
+- Tests (+10): dispatch (skill block expansion incl. location +
+  additional instructions, template substitution "Fix A then A B",
+  unknown skill/template rejections without installation, prompt message
+  build, empty-prompt invalid, pending-assistant invalid, missing config
+  source loud) + facade (Skill drives with expanded block on the
+  transcript tip, unknown skill errors.As(UnknownSkill), template drive).
+  gofmt/vet clean; ./agent/... 11 packages green.
+- Design ruling recorded in conversation: loading at bare-agent (NewAgent)
+  creation rejected — loop interface stays IO-free (reference agent.ts has
+  zero skill knowledge); the configurable seam is Resources values at
+  harness creation + app-side LoadSourcedSkills. Path/trust/override
+  policy stays homed in codingagent.Resolve.

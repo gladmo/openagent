@@ -62,6 +62,54 @@ func (h *AgentHarness) Prompt(laneName, text string, ctx harness.Context) (*RunR
 	return &RunResult{OperationID: result.OperationID, Outcome: registryResult}, nil
 }
 
+// Skill expands the named skill from the harness resources and drives the
+// admitted run (lane.skill()).
+func (h *AgentHarness) Skill(laneName, name, additionalInstructions string, ctx harness.Context) (*RunResult, error) {
+	return h.driveRunRequest(laneName, runtime.RunRequest{
+		Kind: runtime.RunRequestSkill, Name: name, AdditionalInstructions: additionalInstructions,
+	}, ctx)
+}
+
+// PromptFromTemplate substitutes args into the named template from the
+// harness resources and drives the admitted run (lane.promptFromTemplate()).
+func (h *AgentHarness) PromptFromTemplate(laneName, name string, args []string, ctx harness.Context) (*RunResult, error) {
+	return h.driveRunRequest(laneName, runtime.RunRequest{
+		Kind: runtime.RunRequestPromptTemplate, Name: name, Args: args,
+	}, ctx)
+}
+
+// driveRunRequest mirrors driveRunRequest: dispatch-admit a run request
+// against the lane's config resources, then drive it to settlement.
+func (h *AgentHarness) driveRunRequest(laneName string, request runtime.RunRequest, ctx harness.Context) (*RunResult, error) {
+	lane, err := h.Lane(laneName, ctx)
+	if err != nil {
+		return nil, err
+	}
+	result, err := runtime.AcceptRunRequest(lane, request, func(float64) string { return ai.UUIDv7() }, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if result.Busy != nil {
+		return nil, result.Busy
+	}
+	if result.Invalid != nil {
+		return nil, result.Invalid
+	}
+	if result.UnknownSkill != nil {
+		return nil, result.UnknownSkill
+	}
+	if result.UnknownTemplate != nil {
+		return nil, result.UnknownTemplate
+	}
+	registry := runtime.NewModelsRegistry(h.options.Models)
+	h.installPipeline(registry)
+	registryResult, err := h.driveOperation(lane, result.OperationID, registry, ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &RunResult{OperationID: result.OperationID, Outcome: registryResult}, nil
+}
+
 // driveOperation runs the drive dispatcher over the installed operation.
 func (h *AgentHarness) driveOperation(lane *runtime.Lane, operationID string, registry *runtime.ModelsRegistry, ctx harness.Context) (*runtime.DriveOutcome, error) {
 	gate, control := harness.CreateGate()
