@@ -20,7 +20,7 @@ ignore/       npm ignore 7.0.8 semantics
 telemetry/    Span contract, NOOP / in-memory contexts
 chord/        JSON contracts, context/, delta/, services/
 ai/           Types, streaming, retry, catalog, providers
-agent/        Agent loop, proxy, search, harness/ and tools
+agent/        Agent loop, proxy, search, harness/ (session, runtime, compaction), tools
 tui/          pi-tui port: components, keys, diff renderer ([module](modules/tui.md))
 codingagent/  coding-agent CLI port: sessions, tools, modes ([module](modules/codingagent.md))
 cmd/          openagent / openagent-rpc binaries
@@ -40,7 +40,7 @@ examples/     Runnable example agents
 - **Tools:** define tools in `agent/harness/tools` or `codingagent/core/tools`; the loop's dispatch calls them.
 - **Extensions:** `codingagent`'s extension API is Go-native; runtime TypeScript loading is a documented deviation (PARITY.md).
 - **Telemetry:** span schemas via `telemetry/` contexts; NOOP and in-memory ship.
-- **Trajectory:** run records via `trajectory/` ([module](modules/trajectory.md)).
+- **Trajectory & compaction:** run records via `trajectory/`; checkpoint summaries via `agent/harness/compaction` ([trajectory](modules/trajectory.md), [compaction](modules/compaction.md)).
 
 ## Invariants
 

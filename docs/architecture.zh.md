@@ -20,7 +20,7 @@ ignore/       npm ignore 7.0.8 语义
 telemetry/    Span 契约，NOOP / 内存上下文
 chord/        JSON 契约、context/、delta/、services/
 ai/           类型、流式、重试、目录、提供方
-agent/        Agent 循环、代理、搜索、harness/ 与工具
+agent/        Agent 循环、代理、搜索、harness/（session、runtime、compaction）、工具
 tui/          pi-tui 移植：颜色、按键、组件、差分渲染器（[模块](modules/tui.md)）
 codingagent/  pi coding-agent CLI 移植：会话、工具、扩展、模式（[模块](modules/codingagent.md)）
 cmd/          二进制入口：openagent、openagent-rpc
@@ -41,7 +41,7 @@ examples/     可运行的示例 agent
 - **工具：** 在 `agent/harness/tools` 定义工具，由循环调度调用；coding agent 在 `codingagent/core/tools` 包装自有工具集。
 - **扩展：** coding agent 的扩展 API 位于 `codingagent/core/extensions`（Go 原生；运行时 TypeScript 加载为已文档化偏差——见 PARITY.md）。
 - **遥测：** 经 `telemetry/` 上下文定义 span 模式；内置 NOOP 与内存实现。
-- **轨迹：** 运行记录见 `trajectory/`（[模块页](modules/trajectory.zh.md)）。
+- **轨迹与压缩：** 运行记录见 `trajectory/`；检查点摘要见 `agent/harness/compaction`（[轨迹](modules/trajectory.zh.md)、[压缩](modules/compaction.zh.md)）。
 
 ## 不变量
 

@@ -3535,3 +3535,45 @@ Remaining ocr findings NOT fixed this round (tracked for follow-up): SessionMana
   zero skill knowledge); the configurable seam is Resources values at
   harness creation + app-side LoadSourcedSkills. Path/trust/override
   policy stays homed in codingagent.Resolve.
+
+## COMPACTION EXTRACTION ROUND (agent/harness/compaction — openagent-native)
+
+- agent/harness/compaction/: provider-agnostic compaction core extracted
+  from the codingagent port (pi core/compaction/compaction.ts) for
+  non-codingagent consumers; codingagent itself is untouched. Same
+  provenance class as trajectory/ (openagent-native, not a 1:1 port);
+  decision record in .agents/notes/implemented/architecture/
+  2026-10-14-compaction-core-extraction.md.
+- compaction.go: Settings/DefaultSettings + ShouldCompact threshold;
+  PathEntry (linear branch-path entry contribution: ID, IsCompaction,
+  Summary, Details, Messages); FindCutPoint backward token-budget walk
+  with valid-cut snapping (user/assistant, never tool results), metadata
+  pull-in, split-turn reporting; PrepareCompaction boundary handling over
+  the newest contributing checkpoint (previous summary, post-boundary
+  history, split-turn prefix, nil on nothing-compressible / trailing
+  checkpoint).
+- tokens.go: EstimateTokens (chars/4 per block), CalculateContextTokens,
+  EstimateContextTokens (last valid assistant usage + trailing estimate;
+  aborted/errored/zero-usage assistants ignored).
+- summarization.go: reference prompts verbatim (initial/update/
+  turn-prefix + system prompt), CompleteSummarization choke point
+  (CacheRetention "none", fresh ai.UUIDv7 routing id, ai.RetryAssistantCall
+  wrap), GenerateSummary/GenerateTurnPrefixSummary (0.8x / 0.5x reserve
+  budgets, model cap, tool-call refusal, length-stop refusal),
+  Compact (split-turn history + turn-prefix merge with separator,
+  usage combination, file-list suffix). Transport credentials stay with
+  the injected SummarizationStreamFn (reference ApiKey/Headers/Env
+  plumbing dropped — documented deviation).
+- utils.go: file-operation tracking (read/write/edit + path arg),
+  ComputeFileLists/FormatFileOperations, SerializeConversation (labeled
+  text, tool results truncated at 2000 chars), messagesToLlm passthrough.
+- Tests (+16): threshold, per-role token estimation, usage-based context
+  estimate incl. abort/error exclusion, cut-point budget snap/split/
+  metadata adjustment, preparation boundaries (trailing checkpoint,
+  previous-summary carry, single-entry nil), file ops, serialization
+  truncation, summarization choke point (cache none, fresh routing id,
+  transient retry, deterministic no-retry, nil stream fn), prompt shape
+  (initial/update/custom focus/token cap), length/tool-call refusals,
+  Compact plain + split turn, FramedSummary.
+- Docs: modules/compaction(.zh).md + architecture map/extension-point
+  entries (.md/.zh.md).
