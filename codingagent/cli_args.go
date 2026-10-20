@@ -202,6 +202,9 @@ func ParseArgs(args []string) *CliArgs {
 
 		case (arg == "--tools" || arg == "-t") && i+1 < len(args):
 			i++
+			// Assign even when every part is empty: the flag's presence
+			// means an explicit (possibly empty) selection.
+			result.Tools = []string{}
 			for _, part := range strings.Split(args[i], ",") {
 				if trimmed := strings.TrimSpace(part); trimmed != "" {
 					result.Tools = append(result.Tools, trimmed)
@@ -210,6 +213,7 @@ func ParseArgs(args []string) *CliArgs {
 
 		case (arg == "--exclude-tools" || arg == "-xt") && i+1 < len(args):
 			i++
+			result.ExcludeTools = []string{}
 			for _, part := range strings.Split(args[i], ",") {
 				if trimmed := strings.TrimSpace(part); trimmed != "" {
 					result.ExcludeTools = append(result.ExcludeTools, trimmed)
@@ -422,6 +426,14 @@ const (
 type PrintSessionOptions struct {
 	Cwd  string
 	Mode string
+	// Tools is the explicit --tools selection; nil = flag absent.
+	Tools []string
+	// ExcludeTools is the --exclude-tools denylist; nil = flag absent.
+	ExcludeTools []string
+	// NoTools mirrors the sdk noTools mode: "all" also empties the registry
+	// allowlist; "builtin" only empties the initial selection (custom tools
+	// stay activatable); "" = neither flag.
+	NoTools string
 }
 
 // PrintSessionHost adapts the constructed session for RunPrintMode.
@@ -446,20 +458,65 @@ func SetupPrintSession(options PrintSessionOptions) (*PrintSessionHost, error) {
 	if err != nil {
 		return nil, err
 	}
-	session := NewAgentSession(AgentSessionRuntimeOptions{
-		Config: AgentSessionConfig{
-			Agent:           newAgentForSession(),
-			SessionManager:  sessionManager,
-			SettingsManager: settings,
-			ModelRuntime:    runtime,
-			Cwd:             options.Cwd,
-		},
-	})
+	config := AgentSessionConfig{
+		Agent:           newAgentForSession(),
+		SessionManager:  sessionManager,
+		SettingsManager: settings,
+		ModelRuntime:    runtime,
+		Cwd:             options.Cwd,
+	}
+	applyPrintToolSelection(&config, settings, options)
+	session := NewAgentSession(AgentSessionRuntimeOptions{Config: config})
 	// The agent reaches models only through its stream function; the
 	// reference wires createAgentSession's streamFn (the process-global
 	// default is a test seam).
 	session.Agent.StreamFunction = sessionStreamFn(runtime)
 	return &PrintSessionHost{session: session}, nil
+}
+
+// applyPrintToolSelection ports the sdk.ts tool-selection chain: explicit
+// --tools wins; else --no-tools empties the initial selection; else the
+// resolved defaultTools setting; else the default built-in loadout.
+// --exclude-tools filters the selection; --no-tools=all also empties the
+// registry allowlist.
+func applyPrintToolSelection(config *AgentSessionConfig, settings *SettingsManager, options PrintSessionOptions) {
+	switch {
+	case options.Tools != nil:
+		config.AllowedToolNames = append([]string{}, options.Tools...)
+	case options.NoTools == "all":
+		config.AllowedToolNames = []string{}
+	}
+	if options.ExcludeTools != nil {
+		config.ExcludedToolNames = append([]string{}, options.ExcludeTools...)
+	}
+
+	var initial []string
+	switch {
+	case options.Tools != nil:
+		initial = append([]string{}, options.Tools...)
+	case options.NoTools != "":
+		initial = []string{}
+	default:
+		if configured := settings.GetDefaultTools(); configured != nil {
+			initial = configured
+		} else {
+			initial = append([]string(nil), DefaultToolNames...)
+		}
+	}
+	if options.ExcludeTools != nil {
+		excluded := map[string]bool{}
+		for _, name := range options.ExcludeTools {
+			excluded[name] = true
+		}
+		filtered := make([]string, 0, len(initial))
+		for _, name := range initial {
+			if !excluded[name] {
+				filtered = append(filtered, name)
+			}
+		}
+		initial = filtered
+	}
+	config.InitialActiveToolNames = initial
 }
 
 // sessionStreamFn adapts the model runtime to the agent's stream seam. The

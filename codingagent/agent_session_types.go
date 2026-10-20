@@ -205,9 +205,11 @@ type AgentSessionConfig struct {
 	CustomTools []*ToolDefinition
 	// ModelRuntime is the canonical model/auth runtime.
 	ModelRuntime *ModelRuntime
-	// InitialActiveToolNames default to read/bash/edit/write.
+	// InitialActiveToolNames sets the initial active tools: nil defaults to
+	// read/bash/edit/write (after transcript restore), an empty slice starts
+	// with no tools.
 	InitialActiveToolNames []string
-	// AllowedToolNames is an optional allowlist.
+	// AllowedToolNames is an optional allowlist (empty = no tools allowed).
 	AllowedToolNames []string
 	// ExcludedToolNames is an optional denylist.
 	ExcludedToolNames []string

@@ -63,9 +63,9 @@ func TestAgentSessionToolRegistry(t *testing.T) {
 		}
 	}
 
-	// Full registry includes discovery tools.
+	// Full registry includes discovery tools and powershell.
 	all := session.GetAllTools()
-	for _, expected := range []string{"grep", "find", "ls"} {
+	for _, expected := range []string{"grep", "find", "ls", "powershell"} {
 		found := false
 		for _, name := range all {
 			if name == expected {
@@ -89,6 +89,133 @@ func TestAgentSessionToolRegistry(t *testing.T) {
 	}
 	if strings.Contains(prompt, "- bash:") {
 		t.Fatal("inactive tool in prompt")
+	}
+}
+
+func TestAgentSessionInstallsToolsOnAgent(t *testing.T) {
+	session := newTestSession(t)
+
+	// The default loadout is executable on the agent (the loop snapshots
+	// it per run).
+	installed := session.Agent.Tools()
+	if len(installed) != 4 {
+		t.Fatalf("installed = %d tools", len(installed))
+	}
+	for i, expected := range []string{"read", "bash", "edit", "write"} {
+		if installed[i].Name != expected {
+			t.Fatalf("installed[%d] = %s, want %s", i, installed[i].Name, expected)
+		}
+	}
+
+	session.SetActiveToolsByName([]string{"read"})
+	installed = session.Agent.Tools()
+	if len(installed) != 1 || installed[0].Name != "read" {
+		t.Fatalf("installed = %v", installed)
+	}
+}
+
+func TestAgentSessionExplicitEmptyTools(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(EnvAgentDirName(), dir)
+
+	manager, err := SessionManagerCreate(dir, "", nil)
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	session := NewAgentSession(AgentSessionRuntimeOptions{
+		Config: AgentSessionConfig{
+			Agent:                  agent.NewAgent(agent.AgentOptions{}),
+			SessionManager:         manager,
+			SettingsManager:        SettingsManagerInMemory(Settings{}, nil),
+			Cwd:                    dir,
+			InitialActiveToolNames: []string{},
+		},
+	})
+	if active := session.GetActiveToolNames(); len(active) != 0 {
+		t.Fatalf("active = %v", active)
+	}
+	if installed := session.Agent.Tools(); len(installed) != 0 {
+		t.Fatalf("installed = %v", installed)
+	}
+}
+
+func TestAgentSessionEmptyAllowlist(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(EnvAgentDirName(), dir)
+
+	manager, err := SessionManagerCreate(dir, "", nil)
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	session := NewAgentSession(AgentSessionRuntimeOptions{
+		Config: AgentSessionConfig{
+			Agent:            agent.NewAgent(agent.AgentOptions{}),
+			SessionManager:   manager,
+			SettingsManager:  SettingsManagerInMemory(Settings{}, nil),
+			Cwd:              dir,
+			AllowedToolNames: []string{},
+		},
+	})
+	if all := session.GetAllTools(); len(all) != 0 {
+		t.Fatalf("registry = %v", all)
+	}
+	if active := session.GetActiveToolNames(); len(active) != 0 {
+		t.Fatalf("active = %v", active)
+	}
+}
+
+func TestAgentSessionRestoresToolsFromTranscript(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(EnvAgentDirName(), dir)
+
+	manager, err := SessionManagerCreate(dir, "", nil)
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	// Seed a transcript declaring a loadout via its system message.
+	manager.AppendMessage(&ai.SystemMessage{ToolsAdded: []ai.Tool{
+		{Name: "read"}, {Name: "grep"},
+	}})
+
+	session := NewAgentSession(AgentSessionRuntimeOptions{
+		Config: AgentSessionConfig{
+			Agent:           agent.NewAgent(agent.AgentOptions{}),
+			SessionManager:  manager,
+			SettingsManager: SettingsManagerInMemory(Settings{}, nil),
+			Cwd:             dir,
+		},
+	})
+	active := session.GetActiveToolNames()
+	if len(active) != 2 || active[0] != "read" || active[1] != "grep" {
+		t.Fatalf("restored = %v", active)
+	}
+	if installed := session.Agent.Tools(); len(installed) != 2 {
+		t.Fatalf("installed = %v", installed)
+	}
+}
+
+func TestAgentSessionExplicitInitialSkipsTranscriptRestore(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(EnvAgentDirName(), dir)
+
+	manager, err := SessionManagerCreate(dir, "", nil)
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	manager.AppendMessage(&ai.SystemMessage{ToolsAdded: []ai.Tool{{Name: "read"}}})
+
+	session := NewAgentSession(AgentSessionRuntimeOptions{
+		Config: AgentSessionConfig{
+			Agent:                  agent.NewAgent(agent.AgentOptions{}),
+			SessionManager:         manager,
+			SettingsManager:        SettingsManagerInMemory(Settings{}, nil),
+			Cwd:                    dir,
+			InitialActiveToolNames: []string{"bash", "write"},
+		},
+	})
+	active := session.GetActiveToolNames()
+	if len(active) != 2 || active[0] != "bash" || active[1] != "write" {
+		t.Fatalf("active = %v", active)
 	}
 }
 

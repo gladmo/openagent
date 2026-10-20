@@ -24,6 +24,8 @@ English | [中文](codingagent.zh.md)
 
 `core/tools` ports bash (with the shared shell-tool factory covering PowerShell), edit (+ diff), read (image attachments, truncation notices), write, grep (ripgrep JSON events), find (fd globs), ls — each with pluggable operations for remote delegation and the mutation queue serializing same-file writes.
 
+`agent_session.go` loads them per session: the registry holds the eight built-ins, `SetActiveToolsByName` activates a loadout and installs the executable set on the `Agent` (whose loop declares `toolsAdded`/`toolsRemoved` per request), and read/bash construction reads settings (`images.autoResize`, `shellPath`, `shellCommandPrefix`). The initial loadout — `read, bash, edit, write` by default — comes from `SetupPrintSession` resolving `--tools`, `--exclude-tools`, `--no-tools`, `--no-builtin-tools`, and the `defaultTools` setting (`+name`/`-name` modifiers); `nil` selects the default (with the transcript's declared loadout restored when one exists), an empty selection starts with no tools.
+
 ## Compaction
 
 - `compaction.go` computes token estimates and cut points; the LLM summarization call lands with the runtime phase.

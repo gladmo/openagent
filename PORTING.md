@@ -3577,3 +3577,38 @@ Remaining ocr findings NOT fixed this round (tracked for follow-up): SessionMana
   Compact plain + split turn, FramedSummary.
 - Docs: modules/compaction(.zh).md + architecture map/extension-point
   entries (.md/.zh.md).
+
+## TOOL LOADING ALIGNMENT ROUND (agent-session loadout wiring — CORE)
+
+- codingagent/agent_session.go: SetActiveToolsByName now installs the
+  executable loadout via Agent.SetTools (previously the session recorded
+  names only, so every agent loop ran with zero tools: no declarations,
+  no executions); buildRuntime registers the 8 builtin definitions in
+  createAllToolDefinitions key order (read, bash, powershell, edit,
+  write, grep, find, ls — powershell was ported but never registered)
+  and wires settings into construction (read images.autoResize via
+  GetImageAutoResize, bash shellCommandPrefix/shellPath); nil-vs-empty
+  InitialActiveToolNames/AllowedToolNames semantics preserved (nil =
+  default four + restoreToolsFromTranscript replay of the transcript's
+  system-message toolsAdded/toolsRemoved; empty = explicit zero tools /
+  empty registry); restoreToolsFromTranscript ports the pinned
+  _restoreToolsFromTranscript via BuildSessionProjectionFromLeaf.
+- codingagent/settings_manager.go: DefaultToolNames +
+  ResolveDefaultTools (+name/-name modifier resolution, plain names
+  replace the default; nil-vs-empty: unset setting returns nil) +
+  GetImageAutoResize (handles Settings-typed nested maps, which do not
+  assert to map[string]any).
+- codingagent/cli_args.go + cmd/openagent/main.go: PrintSessionOptions
+  carries Tools/ExcludeTools/NoTools; applyPrintToolSelection ports the
+  sdk.ts chain (tools ?? noTools ? [] : defaultTools ?? DEFAULT, minus
+  excludes; allowlist = tools ?? (noTools=="all" ? [] : nil)); main.ts
+  flag mapping via noToolsModeFromCli (--no-tools -> all,
+  --no-builtin-tools -> builtin); --tools/--exclude-tools parsing keeps
+  flag presence distinct from an all-empty value (pi assigns []).
+- Tests: agent_session (installed-on-agent default + filtered, explicit
+  empty selection, empty allowlist, transcript restore, explicit initial
+  skips restore), cli_args (presence semantics + applyPrintToolSelection
+  battery), settings (ResolveDefaultTools 8-case battery, unset vs empty
+  defaultTools, images.autoResize round-trip).
+- Docs: modules/codingagent(.zh).md tools loading paragraph + PARITY CA6
+  row update.

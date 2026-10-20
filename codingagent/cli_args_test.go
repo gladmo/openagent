@@ -95,6 +95,93 @@ func TestParseArgsCommaLists(t *testing.T) {
 	if len(args.Tools) != 2 || args.Tools[0] != "read" {
 		t.Fatalf("tools = %v", args.Tools)
 	}
+
+	// Flag presence means an explicit selection even when every part is
+	// empty; absence leaves Tools nil.
+	args = ParseArgs([]string{"--tools", " , "})
+	if args.Tools == nil || len(args.Tools) != 0 {
+		t.Fatalf("tools = %#v", args.Tools)
+	}
+	args = ParseArgs([]string{"--exclude-tools", ""})
+	if args.ExcludeTools == nil || len(args.ExcludeTools) != 0 {
+		t.Fatalf("excludeTools = %#v", args.ExcludeTools)
+	}
+	args = ParseArgs([]string{"-p", "hi"})
+	if args.Tools != nil || args.ExcludeTools != nil {
+		t.Fatalf("tools = %#v, excludeTools = %#v", args.Tools, args.ExcludeTools)
+	}
+}
+
+func TestApplyPrintToolSelection(t *testing.T) {
+	toolNames := func(names []string) string {
+		out := ""
+		for _, name := range names {
+			if out != "" {
+				out += ","
+			}
+			out += name
+		}
+		return out
+	}
+
+	t.Run("explicit tools win", func(t *testing.T) {
+		config := &AgentSessionConfig{}
+		applyPrintToolSelection(config, SettingsManagerInMemory(Settings{}, nil), PrintSessionOptions{
+			Tools: []string{"read", "ls"},
+		})
+		if toolNames(config.AllowedToolNames) != "read,ls" || toolNames(config.InitialActiveToolNames) != "read,ls" {
+			t.Fatalf("allowed = %v, initial = %v", config.AllowedToolNames, config.InitialActiveToolNames)
+		}
+	})
+
+	t.Run("no-tools all empties registry and selection", func(t *testing.T) {
+		config := &AgentSessionConfig{}
+		applyPrintToolSelection(config, SettingsManagerInMemory(Settings{}, nil), PrintSessionOptions{NoTools: "all"})
+		if config.AllowedToolNames == nil || len(config.AllowedToolNames) != 0 {
+			t.Fatalf("allowed = %#v", config.AllowedToolNames)
+		}
+		if len(config.InitialActiveToolNames) != 0 {
+			t.Fatalf("initial = %v", config.InitialActiveToolNames)
+		}
+	})
+
+	t.Run("no-tools builtin empties selection only", func(t *testing.T) {
+		config := &AgentSessionConfig{}
+		applyPrintToolSelection(config, SettingsManagerInMemory(Settings{}, nil), PrintSessionOptions{NoTools: "builtin"})
+		if config.AllowedToolNames != nil {
+			t.Fatalf("allowed = %#v", config.AllowedToolNames)
+		}
+		if len(config.InitialActiveToolNames) != 0 {
+			t.Fatalf("initial = %v", config.InitialActiveToolNames)
+		}
+	})
+
+	t.Run("defaultTools setting resolves", func(t *testing.T) {
+		config := &AgentSessionConfig{}
+		settings := SettingsManagerInMemory(Settings{"defaultTools": []any{"+ls", "-bash"}}, nil)
+		applyPrintToolSelection(config, settings, PrintSessionOptions{})
+		if toolNames(config.InitialActiveToolNames) != "read,edit,write,ls" {
+			t.Fatalf("initial = %v", config.InitialActiveToolNames)
+		}
+	})
+
+	t.Run("falls back to default loadout", func(t *testing.T) {
+		config := &AgentSessionConfig{}
+		applyPrintToolSelection(config, SettingsManagerInMemory(Settings{}, nil), PrintSessionOptions{})
+		if toolNames(config.InitialActiveToolNames) != "read,bash,edit,write" {
+			t.Fatalf("initial = %v", config.InitialActiveToolNames)
+		}
+	})
+
+	t.Run("exclude filters the selection", func(t *testing.T) {
+		config := &AgentSessionConfig{}
+		applyPrintToolSelection(config, SettingsManagerInMemory(Settings{}, nil), PrintSessionOptions{
+			ExcludeTools: []string{"bash", "edit"},
+		})
+		if toolNames(config.InitialActiveToolNames) != "read,write" {
+			t.Fatalf("initial = %v", config.InitialActiveToolNames)
+		}
+	})
 }
 
 func TestParseArgsThinkingValidation(t *testing.T) {

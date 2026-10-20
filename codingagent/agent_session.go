@@ -7,6 +7,7 @@ package codingagent
 // rides a seam interface (Go-native extension deviation).
 
 import (
+	"encoding/json"
 	"sync"
 
 	"github.com/gladmo/openagent/abort"
@@ -92,6 +93,13 @@ type ResourceLoaderSeam interface {
 // NewAgentSession builds the session and wires the agent subscription.
 func NewAgentSession(options AgentSessionRuntimeOptions) *AgentSession {
 	config := options.Config
+	// Preserve nil (= unset: default loadout, transcript-restore eligible)
+	// versus a non-nil empty slice (= explicit zero tools).
+	var initialActiveToolNames []string
+	if config.InitialActiveToolNames != nil {
+		initialActiveToolNames = make([]string, 0, len(config.InitialActiveToolNames))
+		initialActiveToolNames = append(initialActiveToolNames, config.InitialActiveToolNames...)
+	}
 	session := &AgentSession{
 		Agent:                  config.Agent,
 		SessionManager:         config.SessionManager,
@@ -107,15 +115,15 @@ func NewAgentSession(options AgentSessionRuntimeOptions) *AgentSession {
 		registeredTools:        map[string]*RegisteredTool{},
 		toolPromptSnippets:     map[string]string{},
 		toolPromptGuidelines:   map[string][]string{},
-		initialActiveToolNames: append([]string(nil), config.InitialActiveToolNames...),
+		initialActiveToolNames: initialActiveToolNames,
 	}
-	if len(config.AllowedToolNames) > 0 {
+	if config.AllowedToolNames != nil {
 		session.allowedToolNames = map[string]bool{}
 		for _, name := range config.AllowedToolNames {
 			session.allowedToolNames[name] = true
 		}
 	}
-	if len(config.ExcludedToolNames) > 0 {
+	if config.ExcludedToolNames != nil {
 		session.excludedToolNames = map[string]bool{}
 		for _, name := range config.ExcludedToolNames {
 			session.excludedToolNames[name] = true
@@ -180,15 +188,17 @@ func (s *AgentSession) Dispose() {
 
 // buildRuntime assembles the tool registry and prompt options.
 func (s *AgentSession) buildRuntime() {
-	// Register the built-in tool definitions.
+	// Register the built-in tool definitions (the reference's
+	// createAllToolDefinitions set and key order).
 	definitions := []*ToolDefinition{
-		CreateReadToolDefinition(s.cwd, nil),
-		CreateBashToolDefinition(s.cwd, nil),
+		CreateReadToolDefinition(s.cwd, s.readToolOptions()),
+		CreateBashToolDefinition(s.cwd, s.bashToolOptions()),
+		CreatePowerShellToolDefinition(s.cwd, nil),
 		CreateEditToolDefinition(s.cwd, nil),
 		CreateWriteToolDefinition(s.cwd, nil),
-		CreateLsToolDefinition(s.cwd, nil),
 		CreateGrepToolDefinition(s.cwd, nil),
 		CreateFindToolDefinition(s.cwd, nil),
+		CreateLsToolDefinition(s.cwd, nil),
 	}
 	definitions = append(definitions, s.customTools...)
 
@@ -204,9 +214,92 @@ func (s *AgentSession) buildRuntime() {
 
 	active := s.initialActiveToolNames
 	if active == nil {
-		active = []string{"read", "bash", "edit", "write"}
+		active = append([]string(nil), DefaultToolNames...)
 	}
 	s.SetActiveToolsByName(active)
+	// An unset initial loadout defers to the transcript's declared tools
+	// (restored sessions keep their loadout; fresh sessions keep the
+	// default).
+	if s.initialActiveToolNames == nil {
+		s.restoreToolsFromTranscript()
+	}
+}
+
+// readToolOptions resolves settings-driven read options; nil settings keep
+// the tool defaults (autoResizeImages defaults true).
+func (s *AgentSession) readToolOptions() *ReadToolOptions {
+	if s.SettingsManager == nil {
+		return nil
+	}
+	autoResize := s.SettingsManager.GetImageAutoResize()
+	return &ReadToolOptions{AutoResizeImages: &autoResize}
+}
+
+// bashToolOptions resolves settings-driven bash options; nil settings keep
+// the tool defaults (empty prefix and shell resolve to platform defaults).
+func (s *AgentSession) bashToolOptions() *BashToolOptions {
+	if s.SettingsManager == nil {
+		return nil
+	}
+	return &BashToolOptions{
+		CommandPrefix: s.SettingsManager.GetShellCommandPrefix(),
+		ShellPath:     s.SettingsManager.GetShellPath(),
+	}
+}
+
+// restoreToolsFromTranscript applies the tool loadout the transcript's
+// system messages declare: additions and removals replayed in order, then
+// filtered to the registry. A transcript with no system message leaves the
+// current loadout untouched.
+func (s *AgentSession) restoreToolsFromTranscript() {
+	if s.SessionManager == nil {
+		return
+	}
+	declared := map[string]bool{}
+	var order []string
+	sawSystem := false
+	for _, projected := range s.SessionManager.BuildSessionProjectionFromLeaf().Entries {
+		for _, message := range projected.Messages {
+			raw, ok := message.(rawAgentMessage)
+			if !ok || raw.Role() != "system" {
+				continue
+			}
+			sawSystem = true
+			var probe struct {
+				ToolsAdded []struct {
+					Name string `json:"name"`
+				} `json:"toolsAdded"`
+				ToolsRemoved []struct {
+					Name string `json:"name"`
+				} `json:"toolsRemoved"`
+			}
+			if json.Unmarshal(raw.Raw(), &probe) != nil {
+				continue
+			}
+			for _, tool := range probe.ToolsRemoved {
+				delete(declared, tool.Name)
+			}
+			for _, tool := range probe.ToolsAdded {
+				if tool.Name == "" {
+					continue
+				}
+				if _, exists := declared[tool.Name]; !exists {
+					order = append(order, tool.Name)
+				}
+				declared[tool.Name] = true
+			}
+		}
+	}
+	if !sawSystem {
+		return
+	}
+	names := make([]string, 0, len(order))
+	for _, name := range order {
+		if declared[name] {
+			names = append(names, name)
+		}
+	}
+	s.SetActiveToolsByName(names)
 }
 
 // registerToolDefinition adds one definition to the registry.
@@ -312,18 +405,24 @@ func (s *AgentSession) GetAllTools() []string {
 	return names
 }
 
-// SetActiveToolsByName activates registry tools by name (unknown ignored)
-// and rebuilds the system prompt.
+// SetActiveToolsByName activates registry tools by name (unknown ignored),
+// installs the executable loadout on the agent (effective next turn), and
+// rebuilds the system prompt.
 func (s *AgentSession) SetActiveToolsByName(toolNames []string) {
 	s.mu.Lock()
 	var valid []string
+	var tools []*agent.AgentTool
 	for _, name := range toolNames {
-		if _, ok := s.toolRegistry[name]; ok {
+		if tool, ok := s.toolRegistry[name]; ok {
 			valid = append(valid, name)
+			tools = append(tools, tool)
 		}
 	}
 	s.activeToolNames = valid
 	s.mu.Unlock()
+	if s.Agent != nil {
+		s.Agent.SetTools(tools)
+	}
 	s.RebuildSystemPrompt(valid)
 }
 

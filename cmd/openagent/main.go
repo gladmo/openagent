@@ -93,8 +93,11 @@ func runInteractive(parsed *codingagent.CliArgs) int {
 		return 1
 	}
 	host, err := codingagent.SetupPrintSession(codingagent.PrintSessionOptions{
-		Cwd:  dir,
-		Mode: string(codingagent.ModeText),
+		Cwd:          dir,
+		Mode:         string(codingagent.ModeText),
+		Tools:        parsed.Tools,
+		ExcludeTools: parsed.ExcludeTools,
+		NoTools:      noToolsModeFromCli(parsed),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
@@ -133,8 +136,11 @@ func runPrint(parsed *codingagent.CliArgs) int {
 	}
 
 	session, err := codingagent.SetupPrintSession(codingagent.PrintSessionOptions{
-		Cwd:  dir,
-		Mode: string(printOutputMode(parsed)),
+		Cwd:          dir,
+		Mode:         string(printOutputMode(parsed)),
+		Tools:        parsed.Tools,
+		ExcludeTools: parsed.ExcludeTools,
+		NoTools:      noToolsModeFromCli(parsed),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
@@ -150,6 +156,20 @@ func runPrint(parsed *codingagent.CliArgs) int {
 		InitialMessage: initial,
 		Messages:       rest,
 	}, nil)
+}
+
+// noToolsModeFromCli ports main.ts's --no-tools/--no-builtin-tools mapping
+// onto the sdk noTools mode: "all" disables every tool, "builtin" only the
+// default built-in selection.
+func noToolsModeFromCli(parsed *codingagent.CliArgs) string {
+	switch {
+	case parsed.NoTools:
+		return "all"
+	case parsed.NoBuiltinTools:
+		return "builtin"
+	default:
+		return ""
+	}
 }
 
 // applyCliModelSelection ports the buildSessionOptions model leg: resolve

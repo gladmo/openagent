@@ -746,9 +746,85 @@ func (m *SettingsManager) GetEnabledModels() []string {
 	return m.GetStringSlice("enabledModels")
 }
 
-// GetDefaultTools reads the tool selection.
+// DefaultToolNames are the tools enabled at startup when `defaultTools`
+// does not change them (pi settings-manager DEFAULT_TOOL_NAMES).
+var DefaultToolNames = []string{"read", "bash", "edit", "write"}
+
+// GetDefaultTools reads the resolved `defaultTools` selection, or nil when
+// no settings layer sets it. Entries support `+name`/`-name` modifiers.
 func (m *SettingsManager) GetDefaultTools() []string {
-	return m.GetStringSlice("defaultTools")
+	value, ok := m.GetSetting("defaultTools")
+	if !ok || value == nil {
+		return nil
+	}
+	asSlice, _ := value.([]any)
+	entries := make([]string, 0, len(asSlice))
+	for _, entry := range asSlice {
+		if text, ok := entry.(string); ok {
+			entries = append(entries, text)
+		}
+	}
+	return ResolveDefaultTools(entries)
+}
+
+// isToolModifier reports whether a defaultTools entry starts with + or -.
+func isToolModifier(entry string) bool {
+	return strings.HasPrefix(entry, "+") || strings.HasPrefix(entry, "-")
+}
+
+// ResolveDefaultTools merges a `defaultTools` list: plain names replace
+// DefaultToolNames, then `+name` adds and `-name` removes a tool, in list
+// order (pi settings-manager resolveDefaultTools).
+func ResolveDefaultTools(entries []string) []string {
+	var plain []string
+	for _, entry := range entries {
+		if !isToolModifier(entry) {
+			plain = append(plain, entry)
+		}
+	}
+	tools := append([]string{}, plain...)
+	if len(plain) == 0 && len(entries) > 0 {
+		tools = append([]string(nil), DefaultToolNames...)
+	}
+	for _, entry := range entries {
+		if !isToolModifier(entry) {
+			continue
+		}
+		name := entry[1:]
+		index := -1
+		for i, existing := range tools {
+			if existing == name {
+				index = i
+				break
+			}
+		}
+		if strings.HasPrefix(entry, "+") && index == -1 && name != "" {
+			tools = append(tools, name)
+		} else if strings.HasPrefix(entry, "-") && index != -1 {
+			tools = append(tools[:index], tools[index+1:]...)
+		}
+	}
+	return tools
+}
+
+// GetImageAutoResize reads images.autoResize (default true).
+func (m *SettingsManager) GetImageAutoResize() bool {
+	value, _ := m.GetSetting("images")
+	var nested map[string]any
+	switch typed := value.(type) {
+	case map[string]any:
+		nested = typed
+	case Settings:
+		nested = typed
+	}
+	if nested == nil {
+		return true
+	}
+	enabled, ok := nested["autoResize"].(bool)
+	if !ok {
+		return true
+	}
+	return enabled
 }
 
 // GetStringSlice reads a []string setting.

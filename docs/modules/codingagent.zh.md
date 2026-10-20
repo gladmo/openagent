@@ -24,6 +24,8 @@
 
 `core/tools` 移植 bash（共享 shell 工具工厂覆盖 PowerShell）、edit（+ diff）、read（图像附件、截断通知）、write、grep（ripgrep JSON 事件）、find（fd glob）、ls——各自带可插拔操作用于远程委托，mutation 队列串行化同文件写入。
 
+`agent_session.go` 按会话加载工具：注册表持有 8 个内置工具，`SetActiveToolsByName` 激活 loadout 并把可执行集安装到 `Agent`（其循环按请求声明 `toolsAdded`/`toolsRemoved`），read/bash 构造读取 settings（`images.autoResize`、`shellPath`、`shellCommandPrefix`）。初始 loadout 默认为 `read, bash, edit, write`，由 `SetupPrintSession` 解析 `--tools`、`--exclude-tools`、`--no-tools`、`--no-builtin-tools` 与 `defaultTools` 设置（`+name`/`-name` 修饰符）得到；`nil` 选择默认集（存在 transcript 声明的 loadout 时恢复之），空选择则以零工具启动。
+
 ## 压缩
 
 - `compaction.go` 计算 token 估算与切割点；LLM 摘要调用随运行时阶段接续。

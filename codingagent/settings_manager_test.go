@@ -270,3 +270,60 @@ func TestSettingsManagerChangelog(t *testing.T) {
 		t.Fatal("changelog write failed")
 	}
 }
+
+func TestResolveDefaultTools(t *testing.T) {
+	cases := []struct {
+		name     string
+		entries  []string
+		expected string
+	}{
+		{"empty entries", []string{}, ""},
+		{"plain names replace default", []string{"read"}, "read"},
+		{"modifiers start from default", []string{"+ls"}, "read,bash,edit,write,ls"},
+		{"remove from default", []string{"-bash"}, "read,edit,write"},
+		{"add and remove in order", []string{"+ls", "-bash", "+bash"}, "read,edit,write,ls,bash"},
+		{"remove unknown is a no-op", []string{"-ls"}, "read,bash,edit,write"},
+		{"plain names then modifiers", []string{"grep", "+find"}, "grep,find"},
+		{"duplicate add is a no-op", []string{"+read"}, "read,bash,edit,write"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			actual := ResolveDefaultTools(test.entries)
+			out := ""
+			for _, name := range actual {
+				if out != "" {
+					out += ","
+				}
+				out += name
+			}
+			if out != test.expected {
+				t.Fatalf("resolve(%v) = %q, want %q", test.entries, out, test.expected)
+			}
+		})
+	}
+}
+
+func TestGetDefaultToolsUnsetVsEmpty(t *testing.T) {
+	manager := SettingsManagerInMemory(Settings{}, nil)
+	if tools := manager.GetDefaultTools(); tools != nil {
+		t.Fatalf("unset defaultTools = %v", tools)
+	}
+
+	// A present-but-empty setting resolves to an explicit empty selection.
+	manager.SetSetting("defaultTools", []any{})
+	if tools := manager.GetDefaultTools(); tools == nil || len(tools) != 0 {
+		t.Fatalf("empty defaultTools = %#v", tools)
+	}
+}
+
+func TestGetImageAutoResize(t *testing.T) {
+	manager := SettingsManagerInMemory(Settings{}, nil)
+	if !manager.GetImageAutoResize() {
+		t.Fatal("autoResize default = false")
+	}
+
+	manager.SetNestedSetting("images", "autoResize", false)
+	if manager.GetImageAutoResize() {
+		t.Fatal("autoResize = true after disable")
+	}
+}
