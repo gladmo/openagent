@@ -98,6 +98,7 @@ const (
 	ExecErrShellUnavailable = "shell_unavailable"
 	ExecErrSpawnError       = "spawn_error"
 	ExecErrCallbackError    = "callback_error"
+	ExecErrSpillError       = "spill_error"
 	ExecErrUnknown          = "unknown"
 )
 

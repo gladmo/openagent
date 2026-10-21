@@ -3638,3 +3638,23 @@ Remaining ocr findings NOT fixed this round (tracked for follow-up): SessionMana
   queue release allows requeue.
 - Docs: modules/toolset(.zh).md new pair; PARITY harness tools/toolset
   rows; Agent Note pair.
+
+## LOCAL ENV SPILL ROUND (env/local spill-to-temp-file)
+
+- agent/harness/types.go: ExecErrSpillError = "spill_error" joins the
+  closed error-code set.
+- agent/harness/env/local/local.go: execCapture grows the pi spill path —
+  chunks buffer (copied; the read loop reuses its buffer) until the view
+  first truncates, then the buffered prefix plus every later chunk append
+  to CreateTempFile("pi-output-", ".log") so the file holds the complete
+  output; the path publishes via capture.SetSpillPath; writes are
+  synchronous (bounded pipe = inherent backpressure; the TS
+  SPILL_HIGH_WATER_MARK stream mark has no Go counterpart, placeholder
+  const removed); a failed create/write records spill_error and fails the
+  exec after the child settles (mirrors nodejs.ts settle(spillError));
+  finish closes the file before the final snapshot.
+- Tests: env/local (+4) — line-limit trigger (spill = full 6000 lines,
+  view = tail), bytes trigger (single 100KB line; spill 100000B), no
+  spill under limit, spill disabled stays empty; toolset (+1) — adapted
+  bash footnote carries the real spill path and the file materializes.
+- Docs: PARITY env/local row replaces the spill deferral note.

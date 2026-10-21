@@ -71,7 +71,9 @@
   把 harness 工具接进裸 agent 循环；seam 决策见 Agent Note `toolset-adapter-seam`
 - `harness/env/local/`（移植自参考的 `env/nodejs.ts`；改名见 Agent Note
   `env-local-rename`）：真实 ExecutionEnv（路径解析、errno 映射、完整 FS、拉式行读、
-  shell 发现链+进程组树杀、OutputCapture 集成）；spill 文件写延迟（布线完成，文档化）
+  shell 发现链+进程组树杀、OutputCapture 集成、spill 落盘——截断前缀缓冲使全量输出
+  从头写入 `pi-output-*.log`，同步写经有界管道天然背压，spill 失败以
+  `spill_error` 失败整个 exec）
 
 ## session + jsonl（P6）✅ 全量
 

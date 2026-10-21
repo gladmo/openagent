@@ -314,3 +314,98 @@ func abortedSignal() *abortSignalAlias {
 }
 
 var _ = os.Getenv
+
+func TestExecSpillWritesFullOutput(t *testing.T) {
+	env := newEnv(t)
+	result := env.Exec("seq 1 6000", &harness.ShellExecOptions{
+		Capture: &harness.ShellOutputCaptureOptions{
+			Limits: harness.ShellOutputLimits{MaxBytes: harness.DefaultMaxBytes, MaxLines: harness.DefaultMaxLines, Retain: harness.RetainTail},
+			Spill:  true,
+		},
+	}, harness.BackgroundContext)
+	if !result.Ok {
+		t.Fatalf("exec err = %+v", result.Error)
+	}
+	if !result.Value.Truncation.Truncated {
+		t.Fatalf("expected truncated view: %+v", result.Value.Truncation)
+	}
+	spillPath := result.Value.SpillPath
+	if spillPath == "" {
+		t.Fatal("spill path missing on truncated output")
+	}
+	contents, err := os.ReadFile(spillPath)
+	if err != nil {
+		t.Fatalf("read spill: %v", err)
+	}
+	// The spill file holds the complete output: buffered prefix plus tail.
+	if !strings.HasPrefix(string(contents), "1\n") {
+		t.Fatalf("spill missing head, starts with %q", string(contents[:min(20, len(contents))]))
+	}
+	if !strings.HasSuffix(strings.TrimRight(string(contents), "\n"), "6000") {
+		t.Fatalf("spill missing tail")
+	}
+	if lines := strings.Count(string(contents), "\n"); lines != 6000 {
+		t.Fatalf("spill lines = %d, want 6000", lines)
+	}
+}
+
+func TestExecSpillBytesTrigger(t *testing.T) {
+	env := newEnv(t)
+	result := env.Exec("head -c 100000 /dev/zero | tr '\\0' x", &harness.ShellExecOptions{
+		Capture: &harness.ShellOutputCaptureOptions{
+			Limits: harness.ShellOutputLimits{MaxBytes: harness.DefaultMaxBytes, MaxLines: harness.DefaultMaxLines, Retain: harness.RetainTail},
+			Spill:  true,
+		},
+	}, harness.BackgroundContext)
+	if !result.Ok {
+		t.Fatalf("exec err = %+v", result.Error)
+	}
+	if !result.Value.Truncation.Truncated {
+		t.Fatalf("expected truncated view: %+v", result.Value.Truncation)
+	}
+	if result.Value.SpillPath == "" {
+		t.Fatal("spill path missing on byte-truncated output")
+	}
+	info, err := os.Stat(result.Value.SpillPath)
+	if err != nil {
+		t.Fatalf("stat spill: %v", err)
+	}
+	if info.Size() != 100000 {
+		t.Fatalf("spill size = %d, want 100000", info.Size())
+	}
+}
+
+func TestExecNoSpillUnderLimit(t *testing.T) {
+	env := newEnv(t)
+	result := env.Exec("echo hello", &harness.ShellExecOptions{
+		Capture: &harness.ShellOutputCaptureOptions{Spill: true},
+	}, harness.BackgroundContext)
+	if !result.Ok {
+		t.Fatalf("exec err = %+v", result.Error)
+	}
+	if result.Value.Truncation.Truncated {
+		t.Fatalf("unexpected truncation: %+v", result.Value.Truncation)
+	}
+	if result.Value.SpillPath != "" {
+		t.Fatalf("spill created under limit: %q", result.Value.SpillPath)
+	}
+}
+
+func TestExecSpillDisabled(t *testing.T) {
+	env := newEnv(t)
+	result := env.Exec("seq 1 6000", &harness.ShellExecOptions{
+		Capture: &harness.ShellOutputCaptureOptions{
+			Limits: harness.ShellOutputLimits{MaxBytes: harness.DefaultMaxBytes, MaxLines: harness.DefaultMaxLines, Retain: harness.RetainTail},
+			Spill:  false,
+		},
+	}, harness.BackgroundContext)
+	if !result.Ok {
+		t.Fatalf("exec err = %+v", result.Error)
+	}
+	if !result.Value.Truncation.Truncated {
+		t.Fatalf("expected truncated view: %+v", result.Value.Truncation)
+	}
+	if result.Value.SpillPath != "" {
+		t.Fatalf("spill created while disabled: %q", result.Value.SpillPath)
+	}
+}

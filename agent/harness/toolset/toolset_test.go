@@ -5,6 +5,7 @@ package toolset
 // Local owns the env+gate lifecycle behind one idempotent Close.
 
 import (
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -184,5 +185,30 @@ func TestReleaseMutationQueueAllowsRequeue(t *testing.T) {
 	}
 	if !strings.Contains(resultText(readResult), "second") {
 		t.Fatalf("file content after requeue = %q", resultText(readResult))
+	}
+}
+
+func TestAdaptBashSpillFootnoteCarriesPath(t *testing.T) {
+	bundle := NewLocal(t.TempDir(), Coding())
+	defer func() { _ = bundle.Close() }()
+	adapted := byName(t, bundle.AgentTools())
+
+	result, err := adapted["bash"].Execute("c1", jsonx.ObjFrom("command", "seq 1 6000"), nil, nil)
+	if err != nil {
+		t.Fatalf("bash failed: %v", err)
+	}
+	text := resultText(result)
+	if !strings.Contains(text, "Full output: ") {
+		t.Fatalf("truncation footnote missing: %q", text[max(0, len(text)-200):])
+	}
+	details, ok := result.Details.(tools.BashToolDetails)
+	if !ok {
+		t.Fatalf("details type = %T", result.Details)
+	}
+	if details.FullOutputPath == "" || !strings.Contains(text, details.FullOutputPath) {
+		t.Fatalf("footnote path vs details path %q", details.FullOutputPath)
+	}
+	if info, err := os.Stat(details.FullOutputPath); err != nil || info.Size() == 0 {
+		t.Fatalf("spill file not materialized: %v", err)
 	}
 }

@@ -49,10 +49,9 @@ func WithShellEnv(shellEnv map[string]string) func(*LocalExecutionEnv) {
 func (e *LocalExecutionEnv) Cwd() string { return e.cwd }
 
 const (
-	maxTimeoutMS       = 2147483647
-	maxTimeoutSeconds  = maxTimeoutMS / 1000
-	exitStdioGraceMS   = 100
-	spillHighWaterMark = 8 * 1024 * 1024
+	maxTimeoutMS      = 2147483647
+	maxTimeoutSeconds = maxTimeoutMS / 1000
+	exitStdioGraceMS  = 100
 )
 
 func resolveTimeoutMS(timeout *float64) (float64, bool, *harness.ExecutionError) {
@@ -550,7 +549,7 @@ func (e *LocalExecutionEnv) Exec(command string, options *harness.ShellExecOptio
 	}
 	cmd.Stderr = cmd.Stdout // combined
 
-	capture := newExecCapture(captureOptions, onUpdate, ctx)
+	capture := newExecCapture(e, captureOptions, onUpdate, ctx)
 	if err := cmd.Start(); err != nil {
 		return harness.Err[harness.ShellExecResult, *harness.ExecutionError](
 			harness.NewExecutionError(harness.ExecErrSpawnError, err.Error()))
@@ -619,6 +618,9 @@ func (e *LocalExecutionEnv) Exec(command string, options *harness.ShellExecOptio
 		if exitErr, ok := waitErr.(*exec.ExitError); ok {
 			exitCode = int64(exitErr.ExitCode())
 		}
+	}
+	if spillErr := capture.spillError(); spillErr != nil {
+		return harness.Err[harness.ShellExecResult, *harness.ExecutionError](spillErr)
 	}
 	view := capture.snapshot()
 	return harness.Ok[harness.ShellExecResult, *harness.ExecutionError](harness.ShellExecResult{
@@ -714,30 +716,103 @@ func indexByte(b []byte, c byte) int {
 
 func (r *localTextLineReader) Close(harness.Context) error { return r.file.Close() }
 
-// execCapture adapts OutputCapture for exec streaming.
+// execCapture adapts OutputCapture for exec streaming. When spill is
+// enabled, chunks are buffered until the view first truncates; from that
+// point every chunk (including the buffered prefix, so the file holds the
+// complete output) is appended to a temp file whose path is published on
+// the capture. A spill failure fails the exec (ExecErrSpillError).
 type execCapture struct {
 	capture  *harness.OutputCapture
 	onUpdate func(harness.ShellOutputUpdate, harness.Context)
 	ctx      harness.Context
+	env      *LocalExecutionEnv
+	spill    bool
+	prefix   [][]byte
+	file     *os.File
+	path     string
+	err      *harness.ExecutionError
 }
 
-func newExecCapture(options *harness.ShellOutputCaptureOptions, onUpdate func(harness.ShellOutputUpdate, harness.Context), ctx harness.Context) *execCapture {
+func newExecCapture(env *LocalExecutionEnv, options *harness.ShellOutputCaptureOptions, onUpdate func(harness.ShellOutputUpdate, harness.Context), ctx harness.Context) *execCapture {
 	limits := harness.ShellOutputLimits{MaxBytes: harness.DefaultMaxBytes, MaxLines: harness.DefaultMaxLines, Retain: harness.RetainTail}
 	spill := false
 	if options != nil {
 		limits = options.Limits
 		spill = options.Spill
 	}
-	_ = spill // spill file support lands with the temp-file plumbing
 	return &execCapture{
 		capture:  harness.NewOutputCapture(&harness.ShellOutputCaptureOptions{Limits: limits}, ctx, nil, nil),
 		onUpdate: onUpdate,
 		ctx:      ctx,
+		env:      env,
+		spill:    spill,
 	}
 }
 
-func (c *execCapture) push(chunk []byte) { c.capture.Push(string(chunk)) }
-func (c *execCapture) finish()           { c.capture.Finish() }
+// push records one chunk. Chunks before the first truncation are buffered
+// (copied; the caller reuses its read buffer) so the spill file can start
+// at the beginning of the output. Concurrency: push runs only on the read
+// goroutine.
+func (c *execCapture) push(chunk []byte) {
+	wasTruncated := c.capture.Truncated()
+	c.capture.Push(string(chunk))
+	if !c.spill || len(chunk) == 0 || c.err != nil {
+		return
+	}
+	switch {
+	case c.path != "" || wasTruncated:
+		c.writeSpill(chunk)
+	case c.capture.Truncated():
+		for _, buffered := range c.prefix {
+			c.writeSpill(buffered)
+		}
+		c.prefix = nil
+		c.writeSpill(chunk)
+	default:
+		c.prefix = append(c.prefix, append([]byte(nil), chunk...))
+	}
+}
+
+// writeSpill appends to the spill file, creating it on first use. Writes
+// are synchronous; the bounded pipe already applies backpressure to the
+// child, so no high-water mark is needed.
+func (c *execCapture) writeSpill(chunk []byte) {
+	if c.err != nil {
+		return
+	}
+	if c.file == nil {
+		prefix := "pi-output-"
+		suffix := ".log"
+		created := c.env.CreateTempFile(&harness.CreateTempFileOptions{Prefix: &prefix, Suffix: &suffix}, c.ctx)
+		if !created.Ok {
+			c.err = harness.NewExecutionError(harness.ExecErrSpillError, created.Error.Message)
+			return
+		}
+		file, err := os.OpenFile(created.Value, os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			c.err = harness.NewExecutionError(harness.ExecErrSpillError, err.Error())
+			return
+		}
+		c.file = file
+		c.path = created.Value
+		c.capture.SetSpillPath(c.path)
+	}
+	if _, err := c.file.Write(chunk); err != nil {
+		c.err = harness.NewExecutionError(harness.ExecErrSpillError, err.Error())
+	}
+}
+
+func (c *execCapture) finish() {
+	c.capture.Finish()
+	if c.file != nil {
+		_ = c.file.Close()
+		c.file = nil
+	}
+}
+
+// spillError reports a failed spill, if any.
+func (c *execCapture) spillError() *harness.ExecutionError { return c.err }
+
 func (c *execCapture) snapshot() harness.ShellOutputView {
 	view := c.capture.Snapshot()
 	if c.onUpdate != nil {
