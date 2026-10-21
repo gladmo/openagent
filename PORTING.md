@@ -3612,3 +3612,29 @@ Remaining ocr findings NOT fixed this round (tracked for follow-up): SessionMana
   defaultTools, images.autoResize round-trip).
 - Docs: modules/codingagent(.zh).md tools loading paragraph + PARITY CA6
   row update.
+
+## TOOLSET ADAPTER ROUND (agent/harness/toolset — openagent-native)
+
+- agent/harness/toolset/toolset.go: two-tier seam for loading harness
+  tools onto the bare agent loop — Adapt (pure pipeline wrapper:
+  Prepare -> Before -> Execute -> Finalize, abort->chord weaving, update
+  callback mapping, IsError -> error text) and Local (env+gate bundle,
+  idempotent Close: gate -> CleanupShell -> Cleanup ->
+  ReleaseMutationQueue, errors joined) + Coding() four; admission panics
+  (AbortRequested, gate closed) convert to error returns at the seam —
+  the loop's Execute contract; escaping them would crash the loop (no
+  recover there). Seam placement decision + alternatives in Agent Note
+  toolset-adapter-seam (.md/.zh.md).
+- agent/harness/tools/builtin.go: exported ReleaseMutationQueue(env) —
+  Go-native cleanup for the WeakMap-replacement global queue map
+  (reference collects per-env state with GC; the port leaked it).
+- examples/coding_agent: adaptHarnessTool/adaptUpdateCallback removed;
+  bundle usage is now toolset.NewLocal(dir, toolset.Coding()) +
+  ts.Close(); tests drive toolset.Adapt.
+- Tests (+7): Adapt write/read round trip, edit replace, bash
+  success/exit-7 error text, invalid args fail loud, update callback
+  streams, nil env/gate panics at assembly, Local close lifecycle
+  (idempotent, post-close execute reports "gate closed"), mutation
+  queue release allows requeue.
+- Docs: modules/toolset(.zh).md new pair; PARITY harness tools/toolset
+  rows; Agent Note pair.

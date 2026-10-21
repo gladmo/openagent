@@ -74,6 +74,16 @@ func getMutationState(env harness.ExecutionEnv) *mutationQueueState {
 	return state
 }
 
+// ReleaseMutationQueue drops the mutation-queue state of one env. The TS
+// reference holds queues in a WeakMap (garbage-collected with the env); Go
+// has no weak references, so the map grows per env until this cleanup runs.
+// Owners of an env call it on shutdown (see agent/harness/toolset).
+func ReleaseMutationQueue(env harness.ExecutionEnv) {
+	mutationStatesMu.Lock()
+	defer mutationStatesMu.Unlock()
+	delete(mutationStates, env)
+}
+
 func getMutationQueueKey(env harness.ExecutionEnv, path string, ctx harness.Context) (string, error) {
 	absoluteResult := env.AbsolutePath(path, ctx)
 	if !absoluteResult.Ok {

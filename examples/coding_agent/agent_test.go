@@ -1,7 +1,7 @@
 package main
 
-// coding_agent 自测:不经网络与模型,直接驱动适配后的 harness 工具,
-// 验证适配器把 agent 循环签名正确接到 pi 执行管线上。
+// coding_agent 自测:不经网络与模型,直接驱动 toolset 包适配后的
+// harness 工具,验证适配器把 agent 循环签名正确接到 pi 执行管线上。
 
 import (
 	"strings"
@@ -10,7 +10,7 @@ import (
 	"github.com/gladmo/openagent/agent"
 	"github.com/gladmo/openagent/agent/harness"
 	"github.com/gladmo/openagent/agent/harness/env/local"
-	"github.com/gladmo/openagent/agent/harness/tools"
+	"github.com/gladmo/openagent/agent/harness/toolset"
 	chordcontext "github.com/gladmo/openagent/chord/context"
 	"github.com/gladmo/openagent/jsonx"
 )
@@ -26,12 +26,12 @@ func newTestToolset(t *testing.T) testToolset {
 	t.Cleanup(func() { _ = env.Cleanup(chordcontext.BackgroundContext) })
 	gate, control := harness.CreateGate()
 	t.Cleanup(func() { control.Close(nil) })
-	return testToolset{
-		write: adaptHarnessTool(tools.CreateWriteTool(), env, gate),
-		read:  adaptHarnessTool(tools.CreateReadTool(), env, gate),
-		edit:  adaptHarnessTool(tools.CreateEditTool(), env, gate),
-		bash:  adaptHarnessTool(tools.CreateBashTool(), env, gate),
+	adapted := toolset.Adapt(toolset.Coding(), env, gate)
+	byName := map[string]*agent.AgentTool{}
+	for _, tool := range adapted {
+		byName[tool.Name] = tool
 	}
+	return testToolset{write: byName["write"], read: byName["read"], edit: byName["edit"], bash: byName["bash"]}
 }
 
 func TestAdaptedWriteThenRead(t *testing.T) {

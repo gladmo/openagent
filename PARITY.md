@@ -64,7 +64,11 @@
 - `harness/`：types、utils×5、messages、skills、prompt-templates、telemetry schema、
   events 总线、hooks 注册表、execution（gate/tools/assistant）、aliases
 - `harness/tools/`：path-utils、image 嗅探、write/read+变更队列、edit（+diff）、bash
-  （超时校验/Prepare/截断脚注/错误映射）
+  （超时校验/Prepare/截断脚注/错误映射）；`ReleaseMutationQueue` 为 Go-native 补充
+  （参考用 WeakMap，Go 无弱引用，需显式释放）
+- `harness/toolset/`（openagent-native，非 1:1 移植；同 compaction 出处类）：
+  `Adapt`（纯管线适配）+ `Local`（env+gate 捆绑、幂等 Close）+ `Coding()` 四件套，
+  把 harness 工具接进裸 agent 循环；seam 决策见 Agent Note `toolset-adapter-seam`
 - `harness/env/local/`（移植自参考的 `env/nodejs.ts`；改名见 Agent Note
   `env-local-rename`）：真实 ExecutionEnv（路径解析、errno 映射、完整 FS、拉式行读、
   shell 发现链+进程组树杀、OutputCapture 集成）；spill 文件写延迟（布线完成，文档化）
