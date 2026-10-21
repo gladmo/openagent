@@ -3658,3 +3658,23 @@ Remaining ocr findings NOT fixed this round (tracked for follow-up): SessionMana
   spill under limit, spill disabled stays empty; toolset (+1) — adapted
   bash footnote carries the real spill path and the file materializes.
 - Docs: PARITY env/local row replaces the spill deferral note.
+
+## EXEC CAPTURE EXTRACTION ROUND (harness.ExecCapture — openagent-native)
+
+- agent/harness/utils_exec_capture.go: exported ExecCapture — the
+  bounded-view + spill composition lifted out of env/local's private
+  execCapture so custom ExecutionEnvs reuse it; env injected (spill temp
+  files land via env.CreateTempFile, mirroring this.createTempFile);
+  interface is the read loop's shape: Push / Finish / SpillError /
+  Snapshot. Decision + alternatives in Agent Note exec-capture-extraction.
+- agent/harness/env/local/local.go: private execCapture deleted (~120
+  lines); Exec consumes harness.NewExecCapture and keeps only process
+  orchestration (spawn/pipes/timeout/abort/exit-code); spill_error gate
+  moves to capture.SpillError(). Behavior unchanged.
+- Tests: harness-level (+5) over the non-local fakeEnv — spill holds the
+  byte-exact full output through a reused buffer, no spill under limit,
+  disabled stays empty, CreateTempFile failure fails loud as spill_error,
+  Snapshot publishes onUpdate; local-env spill suite and toolset footnote
+  test unchanged and passing.
+- Docs: PARITY harness-root bullet (ExecCapture) + env/local row reworded;
+  Agent Note pair.

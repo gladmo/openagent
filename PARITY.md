@@ -61,8 +61,11 @@
 
 ## harness 顶层 + tools + env（P5）✅ 全量
 
-- `harness/`：types、utils×5、messages、skills、prompt-templates、telemetry schema、
-  events 总线、hooks 注册表、execution（gate/tools/assistant）、aliases
+- `harness/`：types、utils×5（truncate/output-capture/shell-output 等）、messages、skills、
+  prompt-templates、telemetry schema、
+  events 总线、hooks 注册表、execution（gate/tools/assistant）、aliases；`ExecCapture`
+  （openagent-native）：界视图+spill 落盘组合件，任意 ExecutionEnv 复用（参考把该组合内联在唯一
+  env 中）
 - `harness/tools/`：path-utils、image 嗅探、write/read+变更队列、edit（+diff）、bash
   （超时校验/Prepare/截断脚注/错误映射）；`ReleaseMutationQueue` 为 Go-native 补充
   （参考用 WeakMap，Go 无弱引用，需显式释放）
@@ -71,9 +74,9 @@
   把 harness 工具接进裸 agent 循环；seam 决策见 Agent Note `toolset-adapter-seam`
 - `harness/env/local/`（移植自参考的 `env/nodejs.ts`；改名见 Agent Note
   `env-local-rename`）：真实 ExecutionEnv（路径解析、errno 映射、完整 FS、拉式行读、
-  shell 发现链+进程组树杀、OutputCapture 集成、spill 落盘——截断前缀缓冲使全量输出
-  从头写入 `pi-output-*.log`，同步写经有界管道天然背压，spill 失败以
-  `spill_error` 失败整个 exec）
+  shell 发现链+进程组树杀、OutputCapture 集成）；Exec 读循环消费导出的
+  `harness.ExecCapture`（spill 落盘/spill_error 语义见其条目与 Agent Note
+  `exec-capture-extraction`）
 
 ## session + jsonl（P6）✅ 全量
 
