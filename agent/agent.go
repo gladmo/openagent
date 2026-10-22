@@ -62,6 +62,10 @@ type AgentOptions struct {
 	Transport                  *string
 	MaxRetryDelayMs            *float64
 	ToolExecution              *string
+	// Identity is how requests identify the app to providers, merged field
+	// by field over DefaultAgentIdentity ({attribution: PI_ATTRIBUTION});
+	// {attribution: null} sends no attribution headers.
+	Identity *ai.ClientIdentity
 }
 
 type pendingMessageQueue struct {
@@ -171,6 +175,7 @@ type Agent struct {
 	Transport                  string
 	MaxRetryDelayMs            *float64
 	ToolExecution              string
+	Identity                   *ai.ClientIdentity
 }
 
 type agentListener func(event AgentEvent, signal *abort.Signal)
@@ -251,6 +256,7 @@ func NewAgent(options AgentOptions) *Agent {
 	if options.ToolExecution != nil {
 		agent.ToolExecution = *options.ToolExecution
 	}
+	agent.Identity = options.Identity
 	return agent
 }
 
@@ -605,6 +611,7 @@ func (a *Agent) createLoopConfig(skipInitialSteeringPoll bool) *AgentLoopConfig 
 		ToolExecution:    &toolExecution,
 	}
 	config.SessionID = a.SessionID
+	config.Identity = a.Identity
 	config.OnPayload = a.OnPayload
 	config.OnResponse = a.OnResponse
 	config.OnProviderStreamEvent = a.OnProviderStreamEvent

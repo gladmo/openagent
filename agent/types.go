@@ -263,13 +263,16 @@ type EventToolExecutionUpdate struct {
 // EventType implements AgentEvent.
 func (*EventToolExecutionUpdate) EventType() string { return "tool_execution_update" }
 
-// EventToolExecutionEnd is {type:"tool_execution_end", toolCallId, toolName,
-// result, isError}.
+// EventToolExecutionEnd is {type:"tool_execution_end", toolCallId,
+// toolName, result, isError, durationMs?}.
 type EventToolExecutionEnd struct {
 	ToolCallID string
 	ToolName   string
 	Result     *AgentToolResult
 	IsError    bool
+	// DurationMs is how long execute() took, measured with a monotonic
+	// clock; nil when the tool did not run.
+	DurationMs *float64
 }
 
 // EventType implements AgentEvent.
@@ -303,6 +306,10 @@ type AgentLoopConfig struct {
 
 	// ToolExecution is "sequential" or "parallel" (default).
 	ToolExecution *string
+
+	// Identity is how requests identify the app to providers, merged field
+	// by field over DefaultAgentIdentity.
+	Identity *ai.ClientIdentity
 
 	BeforeToolCall func(context *BeforeToolCallContext, signal *abort.Signal) (*BeforeToolCallResult, error)
 	AfterToolCall  func(context *AfterToolCallContext, signal *abort.Signal) (*AfterToolCallResult, error)

@@ -4,8 +4,6 @@ package ai
 // headers.ts, pi-user-agent.ts, and hash.ts.
 
 import (
-	"fmt"
-	"runtime"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -131,13 +129,6 @@ func MergeHeaders(base ProviderHeaders, overlay ProviderHeaders) ProviderHeaders
 		lower[strings.ToLower(name)] = name
 	}
 	return merged
-}
-
-// GetPiUserAgent returns the pi user-agent. The TS version reports
-// platform/release/arch from node:os; Go has no kernel-release accessor in
-// the stdlib, so the release segment is omitted (documented deviation).
-func GetPiUserAgent() string {
-	return fmt.Sprintf("pi (%s; %s)", runtime.GOOS, runtime.GOARCH)
 }
 
 // ShortHash is a fast deterministic hash to shorten long strings (hash.ts).

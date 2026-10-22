@@ -469,6 +469,9 @@ func streamAssistantResponse(
 
 	// Resolve API key (important for expiring tokens).
 	options := config.SimpleStreamOptions
+	// Request identity: pi-ai defaults with attribution to pi unless the
+	// loop config overrides it field by field.
+	options.Identity = ai.MergeClientIdentity(DefaultAgentIdentity, config.Identity)
 	resolved := ""
 	hasKey := false
 	if config.GetAPIKey != nil {
@@ -586,9 +589,10 @@ type executedToolCallBatch struct {
 }
 
 type finalizedToolCallOutcome struct {
-	toolCall *ai.ToolCall
-	result   *AgentToolResult
-	isError  bool
+	toolCall   *ai.ToolCall
+	result     *AgentToolResult
+	isError    bool
+	durationMs *float64
 }
 
 type preparedToolCall struct {
@@ -771,6 +775,9 @@ type preparationResult struct {
 type immediateOutcome struct {
 	result  *AgentToolResult
 	isError bool
+	// durationMs is set by executePreparedToolCall (the execute() time);
+	// preparation-time immediates carry none, like the TS outcome split.
+	durationMs *float64
 }
 
 func shouldTerminateToolBatch(finalizedCalls []finalizedToolCallOutcome) bool {
@@ -866,6 +873,11 @@ func executePreparedToolCall(
 	signal *abort.Signal,
 	emit AgentEventSink,
 ) *immediateOutcome {
+	startedAt := time.Now()
+	elapsed := func() *float64 {
+		duration := float64(time.Since(startedAt).Milliseconds())
+		return &duration
+	}
 	result, err := prepared.tool.Execute(prepared.toolCall.ID, prepared.args, signal, func(partialResult *AgentToolResult) {
 		emit(&EventToolExecutionUpdate{
 			ToolCallID:    prepared.toolCall.ID,
@@ -875,14 +887,14 @@ func executePreparedToolCall(
 		})
 	})
 	if err != nil {
-		return &immediateOutcome{result: createErrorToolResult(err.Error()), isError: true}
+		return &immediateOutcome{result: createErrorToolResult(err.Error()), isError: true, durationMs: elapsed()}
 	}
 	if result == nil {
 		// A tool returning (nil, nil) would nil-deref the loop's
 		// finalization; convert it to an error result like a throw.
-		return &immediateOutcome{result: createErrorToolResult("Tool " + prepared.toolCall.Name + " returned no result"), isError: true}
+		return &immediateOutcome{result: createErrorToolResult("Tool " + prepared.toolCall.Name + " returned no result"), isError: true, durationMs: elapsed()}
 	}
-	return &immediateOutcome{result: result, isError: false}
+	return &immediateOutcome{result: result, isError: false, durationMs: elapsed()}
 }
 
 func finalizeExecutedToolCall(
@@ -927,7 +939,7 @@ func finalizeExecutedToolCall(
 		}
 	}
 
-	return finalizedToolCallOutcome{toolCall: prepared.toolCall, result: result, isError: isError}
+	return finalizedToolCallOutcome{toolCall: prepared.toolCall, result: result, isError: isError, durationMs: executed.durationMs}
 }
 
 func createErrorToolResult(message string) *AgentToolResult {
@@ -943,6 +955,7 @@ func emitToolExecutionEnd(finalized finalizedToolCallOutcome, emit AgentEventSin
 		ToolName:   finalized.toolCall.Name,
 		Result:     finalized.result,
 		IsError:    finalized.isError,
+		DurationMs: finalized.durationMs,
 	})
 }
 
@@ -962,6 +975,7 @@ func createToolResultMessage(finalized finalizedToolCallOutcome) *ai.ToolResultM
 		Details:     details,
 		Usage:       finalized.result.Usage,
 		IsError:     finalized.isError,
+		DurationMs:  finalized.durationMs,
 		TimestampMs: float64(time.Now().UnixMilli()),
 	}
 }
@@ -984,3 +998,8 @@ func getFollowUpMessages(config *AgentLoopConfig) []AgentMessage {
 	}
 	return config.GetFollowUpMessages()
 }
+
+// DefaultAgentIdentity is the request identity of agent loops: pi-ai's
+// defaults with provider attribution to pi. AgentLoopConfig.Identity
+// overrides it field by field.
+var DefaultAgentIdentity = &ai.ClientIdentity{Attribution: &ai.PiAttribution}

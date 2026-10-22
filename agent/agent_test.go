@@ -416,3 +416,70 @@ func TestAgentContinueQueuedFollowUps(t *testing.T) {
 		t.Fatal("assistant tail accepted")
 	}
 }
+
+// Port of "attributes requests to pi by default and merges a configured
+// identity over it" (agent.test.ts).
+func TestAgentIdentityMerge(t *testing.T) {
+	var mu sync.Mutex
+	var received []*ai.ClientIdentity
+	responder := func() *ai.AssistantMessageEventStream {
+		stream := ai.NewAssistantMessageEventStream()
+		go func() {
+			stream.Push(&ai.EventDone{Reason: ai.StopStop, Message: agentText("ok")})
+		}()
+		return stream
+	}
+	agent := NewAgent(AgentOptions{
+		StreamFn: func(_ *ai.Model, _ *ai.TranscriptContext, options *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+			mu.Lock()
+			received = append(received, options.Identity)
+			mu.Unlock()
+			return responder()
+		},
+	})
+
+	prompt := func(text string) {
+		t.Helper()
+		done := make(chan error, 1)
+		go func() { done <- agent.Prompt(testUser(text)) }()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	prompt("hello")
+	acme := ai.ClientAttribution{Name: "acme", URL: "https://acme.example"}
+	agent.Identity = &ai.ClientIdentity{UserAgent: ai.ShortUserAgent(), Attribution: &acme}
+	prompt("hello again")
+	agent.Identity = &ai.ClientIdentity{UserAgent: ai.ShortUserAgent()}
+	prompt("and again")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(received) != 3 {
+		t.Fatalf("received = %+v", received)
+	}
+	pi := ai.PiAttribution
+	want := []ai.ClientIdentity{
+		{Attribution: &pi},
+		{Attribution: &acme, UserAgent: ai.ShortUserAgent()},
+		{Attribution: &pi, UserAgent: ai.ShortUserAgent()},
+	}
+	for i, expected := range want {
+		got := received[i]
+		if got == nil {
+			t.Fatalf("received[%d] = nil", i)
+		}
+		if got.UserAgent == nil && expected.UserAgent != nil || got.UserAgent != nil && expected.UserAgent == nil {
+			t.Fatalf("received[%d] userAgent = %+v", i, got.UserAgent)
+		}
+		if got.UserAgent != nil && *got.UserAgent != *expected.UserAgent {
+			t.Fatalf("received[%d] userAgent = %+v", i, got.UserAgent)
+		}
+		if got.Attribution == nil || got.Attribution.Name != expected.Attribution.Name || got.Attribution.URL != expected.Attribution.URL {
+			t.Fatalf("received[%d] attribution = %+v", i, got.Attribution)
+		}
+		if got.AttributionOff {
+			t.Fatalf("received[%d] attribution off", i)
+		}
+	}
+}

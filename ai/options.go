@@ -59,21 +59,24 @@ type FetchResponse struct {
 // StreamOptions mirrors the TS interface. Callback hooks are function
 // values; onPayload may return a replacement payload (nil keeps it).
 type StreamOptions struct {
-	Signal                    *abort.Signal
-	Telemetry                 telemetry.TelemetrySpan
-	APIKey                    *string
-	Fetch                     FetchFunction
-	Env                       ProviderEnv
-	OnPayload                 func(payload any, model *Model) any
-	OnResponse                func(response ProviderResponse, model *Model)
-	Headers                   ProviderHeaders
-	TimeoutMs                 *float64
-	MaxRetries                *float64
-	MaxRetryDelayMs           *float64
-	OnProviderStreamEvent     func(data any, model *Model)
-	Temperature               *float64
-	SamplingParams            map[string]any
-	Reasoning                 *string
+	Signal                *abort.Signal
+	Telemetry             telemetry.TelemetrySpan
+	APIKey                *string
+	Fetch                 FetchFunction
+	Env                   ProviderEnv
+	OnPayload             func(payload any, model *Model) any
+	OnResponse            func(response ProviderResponse, model *Model)
+	Headers               ProviderHeaders
+	TimeoutMs             *float64
+	MaxRetries            *float64
+	MaxRetryDelayMs       *float64
+	OnProviderStreamEvent func(data any, model *Model)
+	Temperature           *float64
+	SamplingParams        map[string]any
+	Reasoning             *string
+	// Identity selects the User-Agent and provider attribution headers;
+	// nil uses the Models default (pi-ai defaults when unset there).
+	Identity                  *ClientIdentity
 	MaxTokens                 *float64
 	Transport                 *string
 	CacheRetention            *string

@@ -262,8 +262,8 @@ func hasToolHistory(messages []Message) bool {
 }
 
 // createOpenAICompletionsClient resolves the request headers (createClient).
-func createOpenAICompletionsClient(model *Model, context *TranscriptContext, apiKey string, optionsHeaders ProviderHeaders, sessionID string, compat openAICompletionsCompat) map[string]string {
-	headers := map[string]string{"User-Agent": GetPiUserAgent()}
+func createOpenAICompletionsClient(model *Model, context *TranscriptContext, apiKey string, optionsHeaders ProviderHeaders, sessionID string, compat openAICompletionsCompat, identity *ClientIdentity) map[string]string {
+	headers := IdentityHeaders(model, identity)
 	for name, value := range model.Headers {
 		headers[name] = value
 	}

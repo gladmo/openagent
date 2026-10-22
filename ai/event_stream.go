@@ -2,6 +2,7 @@ package ai
 
 import (
 	"sync"
+	"time"
 )
 
 // EventStream ports utils/event-stream.ts: a push/pull stream with no
@@ -100,14 +101,24 @@ func (s *EventStream[T, R]) Result() R {
 }
 
 // AssistantMessageEventStream terminates on done/error and extracts the
-// final assistant message.
+// final assistant message. It also times the response: the final message
+// (done or error event, or the result passed to End) gets DurationMs,
+// measured with a monotonic clock from the stream's creation, unless it
+// already carries a duration or predates the stream. A message created
+// before the stream started belongs to a response measured elsewhere and
+// stays untimed.
 type AssistantMessageEventStream struct {
 	*EventStream[AssistantMessageEvent, *AssistantMessage]
+	startedAt        int64 // wall clock, milliseconds
+	startedMonotonic time.Time
 }
 
 // NewAssistantMessageEventStream creates an empty stream.
 func NewAssistantMessageEventStream() *AssistantMessageEventStream {
+	now := time.Now()
 	return &AssistantMessageEventStream{
+		startedAt:        now.UnixMilli(),
+		startedMonotonic: now,
 		EventStream: NewEventStream[AssistantMessageEvent, *AssistantMessage](
 			func(event AssistantMessageEvent) bool {
 				return event.EventType() == "done" || event.EventType() == "error"
@@ -123,4 +134,34 @@ func NewAssistantMessageEventStream() *AssistantMessageEventStream {
 			},
 		),
 	}
+}
+
+// Push times the terminal message before delivering the event.
+func (s *AssistantMessageEventStream) Push(event AssistantMessageEvent) {
+	switch typed := event.(type) {
+	case *EventDone:
+		s.time(typed.Message)
+	case *EventError:
+		s.time(typed.Error)
+	}
+	s.EventStream.Push(event)
+}
+
+// End times an explicit final result before closing the stream.
+func (s *AssistantMessageEventStream) End(result ...*AssistantMessage) {
+	if len(result) > 0 {
+		s.time(result[0])
+	}
+	s.EventStream.End(result...)
+}
+
+func (s *AssistantMessageEventStream) time(message *AssistantMessage) {
+	if s.Done() || message == nil || message.DurationMs != nil || message.TimestampMs < float64(s.startedAt) {
+		return
+	}
+	elapsed := float64(time.Since(s.startedMonotonic).Milliseconds())
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	message.DurationMs = &elapsed
 }

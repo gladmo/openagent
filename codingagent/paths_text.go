@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gladmo/openagent/abort"
+	"github.com/gladmo/openagent/ai"
 )
 
 // PathInputOptions configure NormalizePath.
@@ -238,10 +239,10 @@ func StripJsonComments(input string) string {
 // utils/pi-user-agent.ts
 // =============================================================================
 
-// GetPiUserAgent builds the HTTP user agent.
+// GetPiUserAgent builds pi's User-Agent for its own network requests; the
+// same detailed form pi-ai sends to providers.
 func GetPiUserAgent(version string) string {
-	runtime_ := "go/" + runtime.Version()
-	return "pi/" + version + " (" + runtime.GOOS + "; " + runtime_ + "; " + runtime.GOARCH + ")"
+	return ai.FormatUserAgent(&ai.ClientIdentity{UserAgent: ai.DetailedUserAgent(), Version: version})
 }
 
 // fileIdentity mirrors the reference dev:ino:size:mtimeNs:ctimeNs revision.

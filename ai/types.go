@@ -199,6 +199,9 @@ type AssistantMessage struct {
 	RawStopReason         *string
 	EndTurn               *bool
 	TimestampMs           float64
+	// DurationMs times this response when a stream stamped it; nil on
+	// messages produced elsewhere, such as a deferred result fetched later.
+	DurationMs *float64
 }
 
 // Role implements Message.
@@ -213,6 +216,9 @@ type ToolResultMessage struct {
 	Usage       *Usage
 	IsError     bool
 	TimestampMs float64
+	// DurationMs carries the tool execution time when the agent loop
+	// recorded one.
+	DurationMs *float64
 }
 
 // Role implements Message.

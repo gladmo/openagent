@@ -205,7 +205,7 @@ func (a *OpenAICompletionsAPI) run(
 	if options != nil && options.SessionID != nil && cacheRetention != CacheRetentionNone {
 		sessionID = *options.SessionID
 	}
-	headers := createOpenAICompletionsClient(model, normalizedContext, apiKey, optionsHeaders, sessionID, compat)
+	headers := createOpenAICompletionsClient(model, normalizedContext, apiKey, optionsHeaders, sessionID, compat, optionsIdentity(options))
 
 	params := buildOpenAICompletionsParams(model, normalizedContext, options, compat, cacheRetention, grammarToolInputProperties)
 	if options != nil && options.OnPayload != nil {

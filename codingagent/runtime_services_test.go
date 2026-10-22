@@ -1,84 +1,14 @@
 package codingagent
 
-// Tests for provider attribution, telemetry gating, and diagnostics
-// dedup (adapted from their reference tests).
+// Tests for client identity, telemetry gating, and diagnostics dedup
+// (adapted from their reference tests).
 
 import (
 	"strings"
 	"testing"
+
+	"github.com/gladmo/openagent/ai"
 )
-
-func TestMergeProviderAttributionHeadersOpenRouter(t *testing.T) {
-	model := &AttributionModel{Provider: "openrouter", BaseURL: "https://openrouter.ai/api/v1"}
-	headers := MergeProviderAttributionHeaders(model, true, "", nil)
-	if headers == nil {
-		t.Fatal("nil headers")
-	}
-	if headers["HTTP-Referer"] != "https://pi.dev" {
-		t.Fatalf("referer = %q", headers["HTTP-Referer"])
-	}
-	if headers["X-OpenRouter-Title"] != "pi" || headers["X-OpenRouter-Categories"] != "cli-agent" {
-		t.Fatalf("headers = %v", headers)
-	}
-
-	// Telemetry off: nil.
-	if headers := MergeProviderAttributionHeaders(model, false, "", nil); headers != nil {
-		t.Fatalf("telemetry off = %v", headers)
-	}
-
-	// Non-attributed provider: nil.
-	other := &AttributionModel{Provider: "anthropic", BaseURL: "https://api.anthropic.com"}
-	if headers := MergeProviderAttributionHeaders(other, true, "", nil); headers != nil {
-		t.Fatalf("unattributed = %v", headers)
-	}
-}
-
-func TestMergeProviderAttributionHeadersHostMatching(t *testing.T) {
-	// NVIDIA NIM by host.
-	nim := &AttributionModel{Provider: "custom", BaseURL: "https://integrate.api.nvidia.com/v1"}
-	headers := MergeProviderAttributionHeaders(nim, true, "", nil)
-	if headers == nil || headers["X-BILLING-INVOKE-ORIGIN"] != "Pi" {
-		t.Fatalf("nim = %v", headers)
-	}
-
-	// Cloudflare by provider id.
-	cf := &AttributionModel{Provider: "cloudflare-workers-ai", BaseURL: "https://api.cloudflare.com/v1"}
-	headers = MergeProviderAttributionHeaders(cf, true, "", nil)
-	if headers == nil || headers["User-Agent"] != "pi-coding-agent" {
-		t.Fatalf("cloudflare = %v", headers)
-	}
-
-	// Cloudflare by gateway host.
-	gateway := &AttributionModel{Provider: "custom", BaseURL: "https://gateway.ai.cloudflare.com/v1"}
-	headers = MergeProviderAttributionHeaders(gateway, true, "", nil)
-	if headers == nil {
-		t.Fatal("gateway nil")
-	}
-}
-
-func TestMergeProviderAttributionHeadersOpenCodeSession(t *testing.T) {
-	opencode := &AttributionModel{Provider: "opencode", BaseURL: "https://opencode.ai"}
-	headers := MergeProviderAttributionHeaders(opencode, false, "sess-123", nil)
-	if headers == nil {
-		t.Fatal("nil session headers")
-	}
-	if headers["x-opencode-session"] != "sess-123" || headers["x-opencode-client"] != "pi" {
-		t.Fatalf("headers = %v", headers)
-	}
-
-	// Other providers get nothing without attribution.
-	other := &AttributionModel{Provider: "anthropic", BaseURL: "https://api.anthropic.com"}
-	if headers := MergeProviderAttributionHeaders(other, false, "sess-123", nil); headers != nil {
-		t.Fatalf("session leaked = %v", headers)
-	}
-
-	// Caller sources take precedence.
-	caller := map[string]string{"x-opencode-session": "override"}
-	headers = MergeProviderAttributionHeaders(opencode, false, "sess-123", caller)
-	if headers["x-opencode-session"] != "override" {
-		t.Fatalf("override = %v", headers)
-	}
-}
 
 func TestIsInstallTelemetryEnabled(t *testing.T) {
 	dir := t.TempDir()
@@ -141,5 +71,30 @@ func TestDeduplicateDiagnostics(t *testing.T) {
 	deduped := DeduplicateDiagnostics(diagnostics)
 	if len(deduped) != 3 {
 		t.Fatalf("count = %d", len(deduped))
+	}
+}
+
+func TestGetClientIdentity(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(EnvAgentDirName(), dir)
+	settings := SettingsManagerCreate(dir, dir, nil)
+
+	// Default: pi attribution while install telemetry is enabled.
+	identity := GetClientIdentity(settings)
+	if identity.UserAgent == nil || identity.UserAgent.Kind != ai.UserAgentDetailed {
+		t.Fatalf("userAgent = %+v", identity.UserAgent)
+	}
+	if identity.Version != Version() {
+		t.Fatalf("version = %q", identity.Version)
+	}
+	if identity.Attribution == nil || identity.Attribution.Name != "pi" || identity.AttributionOff {
+		t.Fatalf("attribution = %+v", identity.Attribution)
+	}
+
+	// Telemetry off: attribution explicitly disabled.
+	t.Setenv("PI_TELEMETRY", "0")
+	identity = GetClientIdentity(settings)
+	if identity.Attribution != nil || !identity.AttributionOff {
+		t.Fatalf("attribution = %+v off=%v", identity.Attribution, identity.AttributionOff)
 	}
 }

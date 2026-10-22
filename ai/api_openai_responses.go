@@ -221,7 +221,7 @@ func (a *OpenAIResponsesAPI) run(
 		GetDeclaredTools(normalizedContext.Messages),
 		compat.SupportsOpenAIGrammarTools,
 	)
-	headers := createResponsesClient(model, normalizedContext, apiKey, optionsHeaders, sessionID, compat)
+	headers := createResponsesClient(model, normalizedContext, apiKey, optionsHeaders, sessionID, compat, optionsIdentity(options))
 
 	params := buildResponsesParams(model, normalizedContext, options, compat, grammarToolInputProperties, cacheRetention)
 	if options != nil && options.OnPayload != nil {
@@ -304,8 +304,8 @@ func (a *OpenAIResponsesAPI) run(
 	return nil
 }
 
-func createResponsesClient(model *Model, context *TranscriptContext, apiKey string, optionsHeaders ProviderHeaders, sessionID string, compat openAIResponsesCompat) map[string]string {
-	headers := map[string]string{"User-Agent": GetPiUserAgent()}
+func createResponsesClient(model *Model, context *TranscriptContext, apiKey string, optionsHeaders ProviderHeaders, sessionID string, compat openAIResponsesCompat, identity *ClientIdentity) map[string]string {
+	headers := IdentityHeaders(model, identity)
 	for name, value := range model.Headers {
 		headers[name] = value
 	}

@@ -272,11 +272,13 @@ type anthropicClientConfig struct {
 	IsOAuthToken bool
 }
 
-func createAnthropicClient(model *Model, apiKey string, optionsHeaders ProviderHeaders, dynamicHeaders map[string]string, sessionID string) anthropicClientConfig {
+func createAnthropicClient(model *Model, apiKey string, optionsHeaders ProviderHeaders, dynamicHeaders map[string]string, sessionID string, identity *ClientIdentity) anthropicClientConfig {
 	piHeaders := map[string]string{
-		"User-Agent": GetPiUserAgent(),
-		"accept":     "application/json",
+		"accept": "application/json",
 		"anthropic-dangerous-direct-browser-access": "true",
+	}
+	for name, value := range IdentityHeaders(model, identity) {
+		piHeaders[name] = value
 	}
 	optionsRecord := providerHeadersToRecord(optionsHeaders)
 

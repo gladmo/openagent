@@ -459,7 +459,7 @@ func SetupPrintSession(options PrintSessionOptions) (*PrintSessionHost, error) {
 		return nil, err
 	}
 	config := AgentSessionConfig{
-		Agent:           newAgentForSession(),
+		Agent:           newAgentForSession(settings),
 		SessionManager:  sessionManager,
 		SettingsManager: settings,
 		ModelRuntime:    runtime,
@@ -558,6 +558,11 @@ func (d *RpcDispatcher) Serve(input io.Reader) int {
 	return 0
 }
 
-func newAgentForSession() *agent.Agent { return agent.NewAgent(agent.AgentOptions{}) }
+func newAgentForSession(settings *SettingsManager) *agent.Agent {
+	return agent.NewAgent(agent.AgentOptions{Identity: identityPtr(GetClientIdentity(settings))})
+}
+
+// identityPtr boxes a client identity for AgentOptions.
+func identityPtr(identity ai.ClientIdentity) *ai.ClientIdentity { return &identity }
 
 func osGetwd() (string, error) { return os.Getwd() }

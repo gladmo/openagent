@@ -214,7 +214,7 @@ func (a *AnthropicMessagesAPI) run(
 	if model.Provider == "github-copilot" {
 		dynamicHeaders = BuildCopilotDynamicHeaders(normalizedContext.Messages, HasCopilotVisionInput(normalizedContext.Messages))
 	}
-	client := createAnthropicClient(model, apiKey, optionsHeaders, dynamicHeaders, sessionID)
+	client := createAnthropicClient(model, apiKey, optionsHeaders, dynamicHeaders, sessionID, optionsIdentity(options))
 	if err := anthropicAssertRequestAuth(model.Provider, apiKey, buildAnthropicRequestHeaders(client)); err != nil {
 		return err
 	}

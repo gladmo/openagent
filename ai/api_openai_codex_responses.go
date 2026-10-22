@@ -110,8 +110,13 @@ func padBase64(segment string) string {
 	return padded
 }
 
-func buildBaseCodexHeaders(initHeaders map[string]string, additionalHeaders ProviderHeaders, accountID, token string) map[string]string {
+func buildBaseCodexHeaders(defaultHeaders map[string]string, initHeaders map[string]string, additionalHeaders ProviderHeaders, accountID, token string) map[string]string {
+	// Defaults first so model and caller headers can override them,
+	// matching the other providers.
 	headers := map[string]string{}
+	for name, value := range defaultHeaders {
+		headers[name] = value
+	}
 	for name, value := range initHeaders {
 		headers[name] = value
 	}
@@ -135,13 +140,11 @@ func buildBaseCodexHeaders(initHeaders map[string]string, additionalHeaders Prov
 	}
 	headers["Authorization"] = "Bearer " + token
 	headers["chatgpt-account-id"] = accountID
-	headers["originator"] = "pi"
-	headers["User-Agent"] = GetPiUserAgent()
 	return headers
 }
 
-func buildCodexSSEHeaders(initHeaders map[string]string, additionalHeaders ProviderHeaders, accountID, token, sessionID string) map[string]string {
-	headers := buildBaseCodexHeaders(initHeaders, additionalHeaders, accountID, token)
+func buildCodexSSEHeaders(defaultHeaders, initHeaders map[string]string, additionalHeaders ProviderHeaders, accountID, token, sessionID string) map[string]string {
+	headers := buildBaseCodexHeaders(defaultHeaders, initHeaders, additionalHeaders, accountID, token)
 	headers["OpenAI-Beta"] = "responses=experimental"
 	headers["accept"] = "text/event-stream"
 	headers["content-type"] = "application/json"
@@ -544,7 +547,12 @@ func (a *OpenAICodexResponsesAPI) run(
 		}
 	}
 
-	sseHeaders := buildCodexSSEHeaders(model.Headers, optionsHeaders, accountID, apiKey, cacheSessionID)
+	// Codex expects an originator on every request; it is not attribution.
+	identityHeaders := map[string]string{"originator": "pi"}
+	for name, value := range IdentityHeaders(model, optionsIdentity(options)) {
+		identityHeaders[name] = value
+	}
+	sseHeaders := buildCodexSSEHeaders(identityHeaders, model.Headers, optionsHeaders, accountID, apiKey, cacheSessionID)
 	bodyJSON := jsonx.Stringify(body)
 
 	var signal *abort.Signal

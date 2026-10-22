@@ -73,6 +73,7 @@ type modelsImpl struct {
 
 	credentials CredentialStore
 	authContext AuthContext
+	identity    *ClientIdentity
 }
 
 // CreateModelsOptions mirrors the TS interface: credential/auth-context
@@ -80,21 +81,28 @@ type modelsImpl struct {
 type CreateModelsOptions struct {
 	Credentials CredentialStore
 	AuthContext AuthContext
+	// Identity is the default identity of every request; a request's
+	// identity overrides it field by field.
+	Identity *ClientIdentity
 }
 
 // CreateModels builds a Models registry.
 func CreateModels(options ...CreateModelsOptions) MutableModels {
 	creds := CredentialStore(NewInMemoryCredentialStore())
 	authCtx := AuthContext(DefaultAuthContext())
+	var identity *ClientIdentity
 	if len(options) > 0 {
 		if options[0].Credentials != nil {
 			creds = options[0].Credentials
+		}
+		if options[0].Identity != nil {
+			identity = options[0].Identity
 		}
 		if options[0].AuthContext != nil {
 			authCtx = options[0].AuthContext
 		}
 	}
-	return &modelsImpl{providers: map[string]Provider{}, credentials: creds, authContext: authCtx}
+	return &modelsImpl{providers: map[string]Provider{}, credentials: creds, authContext: authCtx, identity: identity}
 }
 
 func (m *modelsImpl) SetProvider(provider Provider) {
@@ -193,7 +201,6 @@ func (m *modelsImpl) applyAuth(model *Model, options *StreamOptions) (*Model, *S
 	if apiKey == nil {
 		apiKey = auth.APIKey
 	}
-	headers := MergeHeaders(auth.Headers, options.Headers)
 	var env ProviderEnv
 	if resolution.Env != nil || options.Env != nil {
 		env = ProviderEnv{}
@@ -210,10 +217,21 @@ func (m *modelsImpl) applyAuth(model *Model, options *StreamOptions) (*Model, *S
 		copyModel.BaseURL = *auth.BaseURL
 		requestModel = &copyModel
 	}
+	sessionID := ""
+	if options.SessionID != nil {
+		sessionID = *options.SessionID
+	}
+	sessionHeaders := ProviderHeaders{}
+	for name, value := range OpenCodeSessionHeaders(requestModel, sessionID) {
+		value := value
+		sessionHeaders[name] = &value
+	}
+	headers := MergeHeaders(MergeHeaders(sessionHeaders, auth.Headers), options.Headers)
 	requestOptions := *options
 	requestOptions.APIKey = apiKey
 	requestOptions.Headers = headers
 	requestOptions.Env = env
+	requestOptions.Identity = MergeClientIdentity(m.identity, options.Identity)
 	return requestModel, &requestOptions, nil
 }
 

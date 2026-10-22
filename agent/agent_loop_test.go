@@ -365,3 +365,55 @@ func TestAgentLoopContinueFromToolResult(t *testing.T) {
 		t.Fatalf("calls = %d", *calls)
 	}
 }
+
+// Port of "records how long execute() took on the tool result, excluding
+// hooks" (#10549, agent-loop.test.ts).
+func TestAgentLoopRecordsToolExecutionDuration(t *testing.T) {
+	streamFn, _ := scriptedStreamFn(
+		testAssistant(
+			&ai.ToolCall{ID: "ran", Name: "echo", Arguments: jsonx.ObjFrom("x", float64(1))},
+			&ai.ToolCall{ID: "blocked", Name: "echo", Arguments: jsonx.ObjFrom("x", float64(1))},
+		),
+		testAssistant(ai.TextContent{Text: "done"}),
+	)
+	tool := &AgentTool{
+		Name: "echo", Description: "Echo", Label: "Echo", Parameters: typeboxObjectX(),
+		Execute: func(string, any, *aiAbortSignal, AgentToolUpdateCallback) (*AgentToolResult, error) {
+			time.Sleep(30 * time.Millisecond)
+			return &AgentToolResult{Content: []ai.ContentBlock{ai.TextContent{Text: "echoed"}}, Details: jsonx.NewObj()}, nil
+		},
+	}
+	config := &AgentLoopConfig{
+		Model:        testModel(),
+		ConvertToLlm: identityConverter,
+		BeforeToolCall: func(context *BeforeToolCallContext, _ *aiAbortSignal) (*BeforeToolCallResult, error) {
+			time.Sleep(100 * time.Millisecond)
+			if context.ToolCall.ID == "blocked" {
+				block := true
+				return &BeforeToolCallResult{Block: &block, Reason: "no"}, nil
+			}
+			return nil, nil
+		},
+	}
+	context := &AgentContext{Messages: []AgentMessage{}, Tools: []*AgentTool{tool}}
+
+	stream := AgentLoop([]AgentMessage{testUser("go")}, context, config, nil, streamFn)
+	_, result := collectAgentEvents(t, stream)
+	var ran, blocked *ai.ToolResultMessage
+	for _, message := range result {
+		if tr, ok := message.(*ai.ToolResultMessage); ok {
+			if tr.ToolCallID == "ran" {
+				ran = tr
+			}
+			if tr.ToolCallID == "blocked" {
+				blocked = tr
+			}
+		}
+	}
+	if ran == nil || ran.DurationMs == nil || *ran.DurationMs < 25 || *ran.DurationMs >= 100 {
+		t.Fatalf("ran duration = %v (hooks must be excluded)", ran.DurationMs)
+	}
+	if blocked == nil || !blocked.IsError || blocked.DurationMs != nil {
+		t.Fatalf("blocked = %+v (never ran; no duration)", blocked)
+	}
+}
