@@ -51,9 +51,14 @@ func (ImageContent) ContentType() string { return "image" }
 
 // ToolCall is a "toolCall" block.
 type ToolCall struct {
-	ID               string
-	Name             string
-	Arguments        *jsonx.Obj // JsonObject
+	ID        string
+	Name      string
+	Arguments *jsonx.Obj // JsonObject
+	// ArgumentsError is set when the model's complete arguments text was
+	// not a valid JSON object; Arguments is then empty. Describes the
+	// problem and includes the text the model sent; tool argument
+	// validation fails with it.
+	ArgumentsError   *string
 	ThoughtSignature *string
 	Namespace        *string
 }
@@ -430,9 +435,12 @@ type Model struct {
 
 	// Type is "chat" (zero value), "image", or "classifier".
 	Type string
-	// SamplingParams are default sampling parameters merged under request
-	// options (openai-completions buildParams).
+	// SamplingParams are default sampling parameters merged under
+	// per-thinking-level and request sampling params.
 	SamplingParams map[string]any
+	// SamplingParamsByThinkingLevel selects sampling parameter overrides by
+	// the effective pi thinking level.
+	SamplingParamsByThinkingLevel map[string]map[string]any
 	// Compat is the provider-specific compat metadata (a decoded jsonx
 	// object; read through the per-API accessor helpers).
 	Compat any

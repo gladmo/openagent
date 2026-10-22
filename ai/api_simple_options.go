@@ -46,7 +46,7 @@ func BuildBaseOptions(model *Model, context *TranscriptContext, options *SimpleS
 		MaxRetryDelayMs:           base.MaxRetryDelayMs,
 		OnProviderStreamEvent:     base.OnProviderStreamEvent,
 		Temperature:               base.Temperature,
-		SamplingParams:            base.SamplingParams,
+		SamplingParams:            ResolveSamplingParams(model, simpleReasoningLevel(options), base.SamplingParams),
 		MaxTokens:                 floatPtr(ClampMaxTokensToContext(model, context, maxTokens)),
 		Transport:                 base.Transport,
 		CacheRetention:            base.CacheRetention,
@@ -131,4 +131,44 @@ func minF(a, b float64) float64 {
 		return a
 	}
 	return b
+}
+
+// ResolveSamplingParams merges sampling parameter sources by precedence:
+// model defaults, then the effective thinking level's overrides, then
+// request params. Nil when every source is empty.
+func ResolveSamplingParams(model *Model, thinkingLevel string, requestParams map[string]any) map[string]any {
+	effective := ClampThinkingLevel(model, thinkingLevel)
+	var levelParams map[string]any
+	if model.SamplingParamsByThinkingLevel != nil {
+		levelParams = model.SamplingParamsByThinkingLevel[effective]
+	}
+	if model.SamplingParams == nil && levelParams == nil && requestParams == nil {
+		return nil
+	}
+	merged := map[string]any{}
+	for name, value := range model.SamplingParams {
+		merged[name] = value
+	}
+	for name, value := range levelParams {
+		merged[name] = value
+	}
+	for name, value := range requestParams {
+		merged[name] = value
+	}
+	return merged
+}
+
+// simpleReasoningLevel reads the scalar reasoning option from simple
+// options ("off" when unset).
+func simpleReasoningLevel(options *SimpleStreamOptions) string {
+	if options == nil {
+		return ThinkingOff
+	}
+	if options.Reasoning != nil {
+		return *options.Reasoning
+	}
+	if options.StreamOptions.Reasoning != nil {
+		return *options.StreamOptions.Reasoning
+	}
+	return ThinkingOff
 }

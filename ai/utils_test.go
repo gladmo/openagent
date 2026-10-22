@@ -65,8 +65,11 @@ func TestIsContextOverflow(t *testing.T) {
 		window       float64
 	}{
 		{"500 `model runner crashed unexpectedly`", "ollama", 32768},
+		// A bodyless 400 is only known to indicate overflow for Cerebras;
+		// HTTP 413 became a provider-agnostic request-size overflow (#11167).
 		{"400 status code (no body)", "opencode-go", 1000000},
-		{"413 status code (no body)", "opencode-go", 1000000},
+		{"custom-provider API error (400): upstream mentioned OpenAI API error (413): invalid input", "custom-provider", 1000000},
+		{"custom-provider API error (4130): invalid input", "custom-provider", 1000000},
 		{"Throttling error: Too many tokens, please wait before trying again.", "ollama", 200000},
 		{"Service unavailable: The service is temporarily unavailable.", "ollama", 200000},
 		{"Rate limit exceeded, please retry after 30 seconds.", "ollama", 200000},
@@ -75,6 +78,17 @@ func TestIsContextOverflow(t *testing.T) {
 	for _, tc := range negative {
 		if IsContextOverflow(overflowErrorMessage(tc.errorMessage, tc.provider), tc.window) {
 			t.Fatalf("expected non-overflow: %s (%s)", tc.errorMessage, tc.provider)
+		}
+	}
+	// HTTP 413 is request-size overflow for every provider (#11167).
+	for _, errorMessage := range []string{
+		`github-copilot API error (413): {"message":"failed to parse request","code":""}`,
+		"custom-provider API error (413): Payload Too Large",
+		`413 {"error":{"message":"failed to parse request","code":""}}`,
+		"413",
+	} {
+		if !IsContextOverflow(overflowErrorMessage(errorMessage, "github-copilot"), 1000000) {
+			t.Fatalf("expected overflow: %s", errorMessage)
 		}
 	}
 	// Xiaomi-style silent overflow.
@@ -220,11 +234,11 @@ func TestEstimateContextTokensWithUsage(t *testing.T) {
 	if estimate.UsageTokens != usageTotal {
 		t.Fatalf("usageTokens = %v", estimate.UsageTokens)
 	}
-	// 8 chars / 4 = 2 tokens trailing.
-	if estimate.TrailingTokens != 2 {
+	// 8 chars / 3.5 = 3 tokens trailing (#10497 reserves 3.5 chars/token).
+	if estimate.TrailingTokens != 3 {
 		t.Fatalf("trailingTokens = %v", estimate.TrailingTokens)
 	}
-	if estimate.Tokens != 102 {
+	if estimate.Tokens != 103 {
 		t.Fatalf("tokens = %v", estimate.Tokens)
 	}
 }
@@ -264,5 +278,33 @@ func TestEstimateMessageTokensSystemWithTools(t *testing.T) {
 	// 4 chars system text = 1 token; tools JSON adds more.
 	if tokens < 2 {
 		t.Fatalf("tokens = %v", tokens)
+	}
+}
+
+// Port of the samplingParamsByThinkingLevel merge (#9776): level-keyed
+// overrides win over model defaults; request params win over both.
+func TestResolveSamplingParams(t *testing.T) {
+	model := &Model{
+		Reasoning:      true,
+		SamplingParams: map[string]any{"temperature": 0.7, "top_p": 0.9},
+		SamplingParamsByThinkingLevel: map[string]map[string]any{
+			ThinkingHigh: {"temperature": 0.3},
+			ThinkingOff:  nil,
+		},
+	}
+	merged := ResolveSamplingParams(model, ThinkingHigh, nil)
+	if merged["temperature"] != 0.3 || merged["top_p"] != 0.9 {
+		t.Fatalf("high = %v", merged)
+	}
+	request := ResolveSamplingParams(model, ThinkingHigh, map[string]any{"temperature": 0.1})
+	if request["temperature"] != 0.1 || request["top_p"] != 0.9 {
+		t.Fatalf("request = %v", request)
+	}
+	unset := ResolveSamplingParams(&Model{}, ThinkingHigh, nil)
+	if unset != nil {
+		t.Fatalf("unset = %v", unset)
+	}
+	if none := ResolveSamplingParams(model, ThinkingMedium, nil); none["temperature"] != 0.7 {
+		t.Fatalf("medium = %v", none)
 	}
 }

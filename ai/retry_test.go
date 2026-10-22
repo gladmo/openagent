@@ -324,3 +324,63 @@ func TestRetryAbortDuringBackoff(t *testing.T) {
 		t.Fatalf("finished = %+v", cb.finished)
 	}
 }
+
+// Port of the ranged retry-pattern additions (#10842, #10920, #10965,
+// #10996, #11057, plus the gap-range at-capacity and usage-limit strings).
+func TestRetryPatternAdditions(t *testing.T) {
+	retryable := []string{
+		"the server_busy error",
+		"servers are currently busy, retry later",
+		"Selected model is at capacity",
+		"The service is temporarily unavailable",
+		"The service is unavailable",
+		"The upstream provider returned an error",
+		"Unable to forward upstream stream",
+		"upstream_request_failed",
+		"upstream_stream_read_error",
+		"stream was interrupted",
+		"http/2 stream failed",
+		"request to https://example.test failed, reason:",
+		"stream disconnected before completion: stream closed before response.completed",
+		"pending stream has been canceled",
+		"subscription_sharing_usage_unavailable",
+	}
+	for _, message := range retryable {
+		if !IsRetryableAssistantError(retryTestMessage(message)) {
+			t.Fatalf("%q should be retryable", message)
+		}
+	}
+	nonRetryable := []string{
+		"subscription_sharing_workplace_individual_usage_limit_exceeded",
+		"subscription_sharing_usage_limit_exceeded",
+	}
+	for _, message := range nonRetryable {
+		if IsRetryableAssistantError(retryTestMessage(message)) {
+			t.Fatalf("%q should not be retryable", message)
+		}
+	}
+}
+
+// Port of the standalone status-code rule (#11057): codes embedded in longer
+// numbers or words must not match.
+func TestRetryStatusCodeBoundaries(t *testing.T) {
+	if !IsRetryableAssistantError(retryTestMessage("HTTP 503 Service Unavailable")) {
+		t.Fatal("HTTP 503 should retry")
+	}
+	if !IsRetryableAssistantError(retryTestMessage("failed with status 429")) {
+		t.Fatal("status 429 should retry")
+	}
+	if IsRetryableAssistantError(retryTestMessage("request 1234299 bytes")) {
+		t.Fatal("byte count should not retry")
+	}
+	if IsRetryableAssistantError(retryTestMessage("error code 15003")) {
+		t.Fatal("longer number should not retry")
+	}
+	if IsRetryableAssistantError(retryTestMessage("model x503-pro unavailable")) {
+		t.Fatal("embedded code should not retry")
+	}
+}
+
+func retryTestMessage(message string) *AssistantMessage {
+	return &AssistantMessage{StopReason: StopError, ErrorMessage: &message}
+}

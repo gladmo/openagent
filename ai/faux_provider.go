@@ -101,7 +101,7 @@ type FauxCore struct {
 	mu                sync.Mutex
 	pendingResponses  []FauxResponseStep
 	deferredResponses map[string]*fauxDeferredEntry
-	promptCache       map[string]string
+	promptCache       map[string][]string
 
 	State           *FauxProviderState
 	tokensPerSecond float64
@@ -208,12 +208,38 @@ func fauxMessageToText(message Message) string {
 	}
 }
 
-func fauxSerializeContext(context *TranscriptContext) string {
-	parts := make([]string, 0, len(context.Messages))
-	for _, message := range context.Messages {
-		parts = append(parts, message.Role()+":"+fauxMessageToText(message))
+// fauxJoinedLength is the length of the prompt text that joins messages
+// with blank lines.
+func fauxJoinedLength(messages []string, count int) float64 {
+	length := 0.0
+	if count > 0 {
+		length = float64((count - 1) * 2)
 	}
-	return strings.Join(parts, "\n\n")
+	for index := 0; index < count && index < len(messages); index++ {
+		length += float64(len(messages[index]))
+	}
+	return length
+}
+
+// fauxCommonPromptPrefixLength is the length of the common prefix of the two
+// joined prompts. Equal messages are compared whole; characters are compared
+// only from the first message that differs.
+func fauxCommonPromptPrefixLength(previous, current []string) float64 {
+	index := 0
+	for index < len(previous) && index < len(current) && previous[index] == current[index] {
+		index++
+	}
+	rest := func(messages []string) string {
+		if index == len(messages) {
+			return ""
+		}
+		joined := strings.Join(messages[index:], "\n\n")
+		if index > 0 {
+			return "\n\n" + joined
+		}
+		return joined
+	}
+	return fauxJoinedLength(previous, index) + float64(fauxCommonPrefixLength(rest(previous), rest(current)))
 }
 
 func fauxCommonPrefixLength(a, b string) int {
@@ -228,9 +254,14 @@ func fauxCommonPrefixLength(a, b string) int {
 	return index
 }
 
-func fauxWithUsageEstimate(message *AssistantMessage, context *TranscriptContext, options *SimpleStreamOptions, promptCache map[string]string, mu *sync.Mutex) *AssistantMessage {
-	promptText := fauxSerializeContext(context)
-	promptTokens := fauxEstimateTokens(promptText)
+func fauxWithUsageEstimate(message *AssistantMessage, context *TranscriptContext, options *SimpleStreamOptions, promptCache map[string][]string, mu *sync.Mutex) *AssistantMessage {
+	// One text per message; the whole prompt joins them with blank lines.
+	prompt := make([]string, 0, len(context.Messages))
+	for _, message := range context.Messages {
+		prompt = append(prompt, message.Role()+":"+fauxMessageToText(message))
+	}
+	promptLength := fauxJoinedLength(prompt, len(prompt))
+	promptTokens := ceilDivFloat(promptLength, 4)
 	outputTokens := fauxEstimateTokens(fauxAssistantContentToText(message.Content))
 	input := promptTokens
 	cacheRead := 0.0
@@ -247,12 +278,12 @@ func fauxWithUsageEstimate(message *AssistantMessage, context *TranscriptContext
 	if sessionID != "" && cacheRetention != CacheRetentionNone {
 		mu.Lock()
 		previousPrompt, exists := promptCache[sessionID]
-		promptCache[sessionID] = promptText
+		promptCache[sessionID] = prompt
 		mu.Unlock()
 		if exists {
-			cachedChars := fauxCommonPrefixLength(previousPrompt, promptText)
-			cacheRead = fauxEstimateTokens(previousPrompt[:cachedChars])
-			cacheWrite = fauxEstimateTokens(promptText[cachedChars:])
+			cachedChars := fauxCommonPromptPrefixLength(previousPrompt, prompt)
+			cacheRead = ceilDivFloat(cachedChars, 4)
+			cacheWrite = ceilDivFloat(promptLength-cachedChars, 4)
 			input = promptTokens - cacheRead
 			if input < 0 {
 				input = 0
@@ -494,7 +525,7 @@ func CreateFauxCore(options RegisterFauxProviderOptions) *FauxCore {
 		minTokens:         minTokens,
 		maxTokens:         maxTokens,
 		deferredResponses: map[string]*fauxDeferredEntry{},
-		promptCache:       map[string]string{},
+		promptCache:       map[string][]string{},
 		State:             &FauxProviderState{},
 		tokensPerSecond:   options.TokensPerSecond,
 		Models:            models,

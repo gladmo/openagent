@@ -101,6 +101,10 @@ type OpenAIResponsesAPI struct{}
 func OpenAIResponsesApi() *OpenAIResponsesAPI { return &OpenAIResponsesAPI{} }
 
 // Stream implements ProviderStreams with plain options.
+const chatgptUsageURL = "https://chatgpt.com/settings/usage"
+
+const chatgptWorkspaceLimitHint = "You've reached your ChatGPT workspace's usage limit. Ask your workspace admin to increase it at admin.openai.com → Workspace → Usage limits."
+
 func (a *OpenAIResponsesAPI) Stream(model *Model, context *TranscriptContext, options *StreamOptions) *AssistantMessageEventStream {
 	responsesOptions := &OpenAIResponsesOptions{}
 	if options != nil {
@@ -172,8 +176,17 @@ func (a *OpenAIResponsesAPI) StreamResponses(model *Model, context *TranscriptCo
 			if model.Provider == "openai" {
 				prefix = "OpenAI API error"
 			}
-			message := FormatProviderError(NormalizeProviderError(err), prefix)
-			output.ErrorMessage = &message
+			errorMessage := FormatProviderError(NormalizeProviderError(err), prefix)
+			// Sign in with ChatGPT shares the subscription's usage limit with
+			// other apps. On ChatGPT Business plans, the workspace admin also
+			// sets a per-user limit.
+			switch {
+			case strings.Contains(errorMessage, "subscription_sharing_usage_limit_exceeded"):
+				errorMessage += "\nCheck your ChatGPT usage: " + chatgptUsageURL
+			case strings.Contains(errorMessage, "subscription_sharing_workplace_individual_usage_limit_exceeded"):
+				errorMessage += "\n" + chatgptWorkspaceLimitHint
+			}
+			output.ErrorMessage = &errorMessage
 			stream.Push(&EventError{Reason: output.StopReason, Error: output})
 			stream.End()
 		}
@@ -452,12 +465,24 @@ func buildResponsesParams(
 		}
 	}
 
-	// Last so custom keys override the named request fields.
-	for name, value := range model.SamplingParams {
-		params.Set(name, value)
-	}
+	// Last so model and request sampling parameters override named request
+	// fields, selected by the effective thinking level. reasoningSummary
+	// alone implies "medium" for the sampling lookup, mirroring the request
+	// reasoning object.
+	level := ThinkingOff
 	if options != nil {
-		for name, value := range options.SamplingParams {
+		if options.ReasoningEffort != nil {
+			level = *options.ReasoningEffort
+		} else if options.ReasoningSummary != nil {
+			level = ThinkingMedium
+		}
+	}
+	var requestParams map[string]any
+	if options != nil {
+		requestParams = options.SamplingParams
+	}
+	if samplingParams := ResolveSamplingParams(model, level, requestParams); samplingParams != nil {
+		for name, value := range samplingParams {
 			params.Set(name, value)
 		}
 	}

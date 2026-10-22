@@ -61,27 +61,20 @@ func TestTransformMessagesCrossModelHandling(t *testing.T) {
 	}
 
 	assistant := transformed[1].(*AssistantMessage)
-	// Cross-model: both thinking blocks become plain text (empty one dropped),
-	// then the original text, then the normalized tool call.
-	if len(assistant.Content) != 4 {
-		t.Fatalf("expected text+text+text+toolCall, got %d blocks", len(assistant.Content))
+	// Cross-model thinking is dropped entirely rather than converted to
+	// text (#11000): only the original text and the normalized tool call
+	// remain.
+	if len(assistant.Content) != 2 {
+		t.Fatalf("expected text+toolCall, got %d blocks", len(assistant.Content))
 	}
-	first, isText := assistant.Content[0].(TextContent)
-	if !isText || first.Text != "same model thinking" {
-		t.Fatalf("expected thinking converted to text, got %#v", assistant.Content[0])
-	}
-	second, isText := assistant.Content[1].(TextContent)
-	if !isText || second.Text != "cross model thinking" {
-		t.Fatalf("unexpected second text: %#v", assistant.Content[1])
-	}
-	third, isText := assistant.Content[2].(TextContent)
+	third, isText := assistant.Content[0].(TextContent)
 	if !isText || third.Text != "answer" || third.TextSignature != nil {
-		t.Fatalf("cross-model text must lose its signature: %#v", assistant.Content[2])
+		t.Fatalf("cross-model text must lose its signature: %#v", assistant.Content[0])
 	}
 	// Tool call id normalized and thoughtSignature dropped.
-	call, ok := assistant.Content[3].(*ToolCall)
+	call, ok := assistant.Content[1].(*ToolCall)
 	if !ok {
-		t.Fatalf("expected tool call, got %#v", assistant.Content[3])
+		t.Fatalf("expected tool call, got %#v", assistant.Content[1])
 	}
 	if call.ID != "bad_id_with_spaces__" {
 		t.Fatalf("unexpected normalized id: %q", call.ID)

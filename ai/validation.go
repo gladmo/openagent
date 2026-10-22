@@ -33,6 +33,9 @@ func ValidateToolCall(tools []Tool, toolCall *ToolCall) (any, error) {
 // schema, applying optional-null normalization, TypeBox conversion, and the
 // raw JSON-Schema coercion pass.
 func ValidateToolArguments(tool *Tool, toolCall *ToolCall) (any, error) {
+	if toolCall.ArgumentsError != nil {
+		return nil, fmt.Errorf("Invalid arguments for tool %q: %s", toolCall.Name, *toolCall.ArgumentsError)
+	}
 	args := jsonx.Clone(toolCallArguments(toolCall))
 	schema := tool.Parameters
 	if schema == nil {

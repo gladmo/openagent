@@ -17,7 +17,7 @@ type ContextUsageEstimate struct {
 }
 
 const (
-	charsPerToken       = 4.0
+	charsPerToken       = 3.5
 	estimatedImageChars = 4800.0
 )
 

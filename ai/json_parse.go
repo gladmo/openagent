@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -12,8 +13,12 @@ import (
 // json-parse.ts
 // ---------------------------------------------------------------------------
 
+// validJSONEscapes lists escapable characters; "u" is absent because bare
+// invalid \u sequences (e.g. \usepackage) must fall through to repair
+// while well-formed \uXXXX keeps the fast path via unicodeEscapeRe
+// (#10955).
 var validJSONEscapes = map[byte]bool{
-	'"': true, '\\': true, '/': true, 'b': true, 'f': true, 'n': true, 'r': true, 't': true, 'u': true,
+	'"': true, '\\': true, '/': true, 'b': true, 'f': true, 'n': true, 'r': true, 't': true,
 }
 
 var unicodeEscapeRe = regexp.MustCompile(`^[0-9a-fA-F]{4}$`)
@@ -106,6 +111,26 @@ func ParseJSONWithRepair(jsonText string) (any, error) {
 	return nil, err
 }
 
+// ParseToolCallArguments parses the model's complete arguments text of a
+// finished tool call. Unlike ParseStreamingJSON it never keeps a partially
+// parsed prefix: once the call is finished, text that is not a valid JSON
+// object means the model sent malformed arguments. In that case arguments
+// is an empty object and argumentsError describes the problem, including
+// the text the model sent, so tool validation can report it back.
+func ParseToolCallArguments(json string) (arguments *jsonx.Obj, argumentsError string) {
+	if strings.TrimSpace(json) == "" {
+		return jsonx.NewObj(), ""
+	}
+	parsed, err := ParseJSONWithRepair(json)
+	if err == nil {
+		if obj, ok := parsed.(*jsonx.Obj); ok {
+			return obj, ""
+		}
+		err = fmt.Errorf("Tool arguments must be a JSON object")
+	}
+	return jsonx.NewObj(), err.Error() + "\n\nReceived arguments:\n" + json
+}
+
 // ParseStreamingJSON attempts to parse potentially incomplete JSON during
 // streaming. Always returns a valid value, defaulting to an empty object.
 func ParseStreamingJSON(partial string) any {
@@ -172,6 +197,10 @@ var overflowPatterns = compileAll(
 	`context[_ ]length[_ ]exceeded`,
 	`too many tokens`,
 	`token limit exceeded`,
+	// HTTP 413 means request-size overflow regardless of provider or body
+	// text. Match raw SDK errors and formatProviderError's prefix, not a
+	// status mentioned in the body (#11167).
+	`^(?:[\w -]+ API error \(413\):|413(?:\s|:|$))`,
 )
 
 var nonOverflowPatterns = compileAll(

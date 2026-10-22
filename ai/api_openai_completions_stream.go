@@ -420,7 +420,11 @@ func (a *OpenAICompletionsAPI) run(
 					stream.Push(&EventToolCallDelta{ContentIndex: index, Delta: delta, Partial: output})
 				}
 			} else if state != nil {
-				state.call.Arguments = ParseStreamingJSONObject(state.partialArgs)
+				arguments, argumentsError := ParseToolCallArguments(state.partialArgs)
+				state.call.Arguments = arguments
+				if argumentsError != "" {
+					state.call.ArgumentsError = &argumentsError
+				}
 			}
 			stream.Push(&EventToolCallEnd{ContentIndex: index, ToolCall: block, Partial: output})
 		}
@@ -497,12 +501,9 @@ func (a *OpenAICompletionsAPI) run(
 
 		delta, hasDelta := JxObjectField(choice, "delta")
 		if hasDelta {
-			if content, has := JxString(delta, "content"); has && len(content) > 0 {
-				index := ensureTextBlock()
-				updateTextBlock(output, index, func(t *TextContent) { t.Text += content })
-				stream.Push(&EventTextDelta{ContentIndex: index, Delta: content, Partial: output})
-			}
-
+			// Handle reasoning before content: some proxies (e.g. LiteLLM)
+			// aggregate reasoning and answer into one delta, and the thinking
+			// block must precede the text block.
 			// Reasoning arrives in reasoning_content (llama.cpp), reasoning,
 			// or reasoning_text. First non-empty field wins.
 			reasoningFields := []string{"reasoning_content", "reasoning", "reasoning_text"}
@@ -523,6 +524,21 @@ func (a *OpenAICompletionsAPI) run(
 				index := ensureThinkingBlock(thinkingSignature)
 				updateThinkingBlock(output, index, func(t *ThinkingContent) { t.Thinking += reasoningDelta })
 				stream.Push(&EventThinkingDelta{ContentIndex: index, Delta: reasoningDelta, Partial: output})
+			}
+
+			if reasoningDetails, ok := JxList(delta, "reasoning_details"); ok {
+				for _, detail := range reasoningDetails {
+					if !isOpenAIReasoningDetail(detail) {
+						continue
+					}
+					ensureThinkingBlock("")
+					*streamedReasoningDetails = appendOpenAIReasoningDetail(*streamedReasoningDetails, detail)
+				}
+			}
+			if content, has := JxString(delta, "content"); has && len(content) > 0 {
+				index := ensureTextBlock()
+				updateTextBlock(output, index, func(t *TextContent) { t.Text += content })
+				stream.Push(&EventTextDelta{ContentIndex: index, Delta: content, Partial: output})
 			}
 
 			if toolCallDeltas, ok := JxList(delta, "tool_calls"); ok {
@@ -569,15 +585,6 @@ func (a *OpenAICompletionsAPI) run(
 				}
 			}
 
-			if reasoningDetails, ok := JxList(delta, "reasoning_details"); ok {
-				for _, detail := range reasoningDetails {
-					if !isOpenAIReasoningDetail(detail) {
-						continue
-					}
-					ensureThinkingBlock("")
-					*streamedReasoningDetails = appendOpenAIReasoningDetail(*streamedReasoningDetails, detail)
-				}
-			}
 		}
 	}
 

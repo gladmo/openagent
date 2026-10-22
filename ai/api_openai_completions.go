@@ -760,7 +760,7 @@ func convertOpenAICompletionsMessages(
 				}
 				textResult := strings.Join(textParts, "\n")
 				toolResultText := "(no tool output)"
-				if len(textResult) > 0 {
+				if len(strings.TrimSpace(textResult)) > 0 {
 					toolResultText = textResult
 				} else if hasImages {
 					toolResultText = "(see attached image)"
@@ -1374,4 +1374,13 @@ func mapOpenAIStopReason(reason string) (string, *string) {
 		message := "Provider finish_reason: " + reason
 		return StopError, &message
 	}
+}
+
+// optionsSamplingParams reads the request sampling params from completions
+// options.
+func optionsSamplingParams(options *OpenAICompletionsOptions) map[string]any {
+	if options == nil {
+		return nil
+	}
+	return options.SamplingParams
 }

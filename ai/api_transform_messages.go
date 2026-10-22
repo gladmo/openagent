@@ -93,28 +93,25 @@ func TransformMessages(messages []Message, model *Model, normalizeToolCallID fun
 			for _, block := range t.Content {
 				switch b := block.(type) {
 				case ThinkingContent:
-					// Redacted thinking is opaque encrypted content, only
-					// valid for the same model.
-					if b.Redacted != nil && *b.Redacted {
-						if isSameModel {
-							content = append(content, b)
-						}
+					// Thinking from another model is dropped. Signatures and
+					// encrypted reasoning are only valid for the model that
+					// produced them, and sending readable thinking as plain
+					// text makes the new model treat it as part of the
+					// visible reply.
+					if !isSameModel {
 						continue
 					}
-					// Same model keeps thinking blocks with signatures even
-					// when the text is empty.
-					if isSameModel && b.ThinkingSignature != nil {
+					// Keep redacted and signed blocks even if the thinking
+					// text is empty (OpenAI encrypted reasoning); they are
+					// needed for replay.
+					if (b.Redacted != nil && *b.Redacted) || b.ThinkingSignature != nil {
 						content = append(content, b)
 						continue
 					}
 					if trimWhitespace(b.Thinking) == "" {
 						continue
 					}
-					if isSameModel {
-						content = append(content, b)
-						continue
-					}
-					content = append(content, TextContent{Text: b.Thinking})
+					content = append(content, b)
 
 				case TextContent:
 					if isSameModel {
@@ -229,4 +226,63 @@ func TransformMessages(messages []Message, model *Model, normalizeToolCallID fun
 
 func trimWhitespace(s string) string {
 	return trimSpace(s)
+}
+
+// SplitErrorToolResult is an error tool result split into a text-only
+// result and the images to send after the tool results.
+type SplitErrorToolResult struct {
+	// Content is the result content with each run of images replaced by a
+	// note.
+	Content []TextContent
+	// Caption names the tool call, sent before Images.
+	Caption string
+	Images  []ImageContent
+}
+
+const errorToolImagePlaceholder = "(image attached after the tool results)"
+
+// SplitErrorToolResultImages splits the images out of an error tool result,
+// for APIs that reject images in error results (Anthropic, and Claude on
+// Bedrock). Send the returned content as the tool result and the caption and
+// images after all tool results of the turn, in the same user message.
+// Returns false for results that need no split (#10794).
+func SplitErrorToolResultImages(msg *ToolResultMessage) (*SplitErrorToolResult, bool) {
+	if !msg.IsError {
+		return nil, false
+	}
+	images := []ImageContent{}
+	for _, block := range msg.Content {
+		if image, ok := block.(ImageContent); ok {
+			images = append(images, image)
+		}
+	}
+	if len(images) == 0 {
+		return nil, false
+	}
+	return &SplitErrorToolResult{
+		Content: replaceErrorImagesWithPlaceholder(msg.Content, errorToolImagePlaceholder),
+		Caption: "Images from the error result of tool call " + msg.ToolCallID + " (" + msg.ToolName + "):",
+		Images:  images,
+	}, true
+}
+
+// replaceErrorImagesWithPlaceholder narrows the placeholder walk to text
+// blocks: error tool results may only carry text after the split.
+func replaceErrorImagesWithPlaceholder(content []ContentBlock, placeholder string) []TextContent {
+	result := []TextContent{}
+	previousWasPlaceholder := false
+	for _, block := range content {
+		if _, isImage := block.(ImageContent); isImage {
+			if !previousWasPlaceholder {
+				result = append(result, TextContent{Text: placeholder})
+			}
+			previousWasPlaceholder = true
+			continue
+		}
+		if text, ok := block.(TextContent); ok {
+			result = append(result, text)
+			previousWasPlaceholder = text.Text == placeholder
+		}
+	}
+	return result
 }

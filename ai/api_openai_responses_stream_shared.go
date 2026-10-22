@@ -470,7 +470,11 @@ func processResponsesStream(
 				} else if slot.partialJSON != "" {
 					source = slot.partialJSON
 				}
-				slot.toolCall.Arguments = ParseStreamingJSONObject(source)
+				parsed, argumentsError := ParseToolCallArguments(source)
+				slot.toolCall.Arguments = parsed
+				if argumentsError != "" {
+					slot.toolCall.ArgumentsError = &argumentsError
+				}
 				if namespace, has := JxString(item, "namespace"); has {
 					slot.toolCall.Namespace = &namespace
 				}

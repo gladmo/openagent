@@ -402,14 +402,7 @@ func convertContentBlocks(content []ContentBlock) any {
 			continue
 		}
 		if image, ok := block.(ImageContent); ok {
-			blocks = append(blocks, jsonx.ObjFrom(
-				"type", "image",
-				"source", jsonx.ObjFrom(
-					"type", "base64",
-					"media_type", image.MimeType,
-					"data", image.Data,
-				),
-			))
+			blocks = append(blocks, convertImageBlock(image))
 		}
 	}
 	hasText := false
@@ -428,11 +421,29 @@ func convertContentBlocks(content []ContentBlock) any {
 }
 
 func convertToolResultMessage(msg *ToolResultMessage) *jsonx.Obj {
+	return convertToolResultMessageContent(msg, msg.Content)
+}
+
+// convertToolResultMessageContent renders a tool result with an optional
+// content override (the text-only split of an error result's images).
+func convertToolResultMessageContent(msg *ToolResultMessage, content []ContentBlock) *jsonx.Obj {
 	return jsonx.ObjFrom(
 		"type", "tool_result",
 		"tool_use_id", msg.ToolCallID,
-		"content", convertContentBlocks(msg.Content),
+		"content", convertContentBlocks(content),
 		"is_error", msg.IsError,
+	)
+}
+
+// convertImageBlock renders one base64 image content block.
+func convertImageBlock(image ImageContent) *jsonx.Obj {
+	return jsonx.ObjFrom(
+		"type", "image",
+		"source", jsonx.ObjFrom(
+			"type", "base64",
+			"media_type", image.MimeType,
+			"data", image.Data,
+		),
 	)
 }
 
@@ -633,18 +644,35 @@ func convertAnthropicMessages(
 
 		case *ToolResultMessage:
 			// Collect consecutive toolResult messages into one user turn.
+			// Anthropic rejects error tool results that contain anything but
+			// text, so their images follow all tool results of the turn,
+			// which must come first in the user message (#10794).
 			var toolResults []any
+			var errorImages []any
 			j := i
 			for j < len(transformedMessages) {
-				if result, ok := transformedMessages[j].(*ToolResultMessage); ok {
-					toolResults = append(toolResults, convertToolResultMessage(result))
-					j++
-				} else {
+				result, ok := transformedMessages[j].(*ToolResultMessage)
+				if !ok {
 					break
 				}
+				if split, hasSplit := SplitErrorToolResultImages(result); hasSplit {
+					override := make([]ContentBlock, 0, len(split.Content))
+					for i := range split.Content {
+						override = append(override, split.Content[i])
+					}
+					toolResults = append(toolResults, convertToolResultMessageContent(result, override))
+					errorImages = append(errorImages, jsonx.ObjFrom("type", "text", "text", split.Caption))
+					for _, image := range split.Images {
+						errorImages = append(errorImages, convertImageBlock(image))
+					}
+				} else {
+					toolResults = append(toolResults, convertToolResultMessage(result))
+				}
+				j++
 			}
 			i = j - 1
-			params = append(params, jsonx.ObjFrom("role", "user", "content", toolResults))
+			turn := append(toolResults, errorImages...)
+			params = append(params, jsonx.ObjFrom("role", "user", "content", turn))
 		}
 	}
 
@@ -816,12 +844,19 @@ func modelHeadersToProviderHeaders(model *Model) ProviderHeaders {
 	return out
 }
 
-func convertAnthropicTools(tools []Tool, isOAuthToken bool, supportsEagerToolInputStreaming bool, supportsStrictTools bool, cacheControl *jsonx.Obj) []any {
+func convertAnthropicTools(tools []Tool, isOAuthToken bool, supportsEagerToolInputStreaming bool, supportsStrictTools bool, cacheControl *jsonx.Obj, disablePreferredStrictTools bool) []any {
 	out := make([]any, 0, len(tools))
 	for index, tool := range tools {
-		strict, err := ResolveJSONSchemaStrictSampling(&tool, supportsStrictTools)
-		if err != nil {
-			panic(err) // TS throws out of buildParams; surfaced by the pump
+		config := ParseConstrainedSampling(tool.ConstrainedSampling)
+		preferredStrict := config != nil && config.Type == "json_schema" && config.Strict == "prefer"
+		strict := false
+		if !(disablePreferredStrictTools && preferredStrict) {
+			// Downgraded requests send preferred-strict tools without strict.
+			var err error
+			strict, err = ResolveJSONSchemaStrictSampling(&tool, supportsStrictTools)
+			if err != nil {
+				panic(err) // TS throws out of buildParams; surfaced by the pump
+			}
 		}
 		parameters, err := GetJSONSchemaToolParameters(&tool, strict)
 		if err != nil {
@@ -891,7 +926,7 @@ func getAnthropicCacheControl(model *Model, cacheRetention *string, env Provider
 	return jsonx.ObjFrom("type", "ephemeral")
 }
 
-func buildAnthropicParams(model *Model, context *TranscriptContext, isOAuthToken bool, options *AnthropicOptions) *jsonx.Obj {
+func buildAnthropicParams(model *Model, context *TranscriptContext, isOAuthToken bool, options *AnthropicOptions, disablePreferredStrictTools bool) *jsonx.Obj {
 	var cacheRetention *string
 	var env ProviderEnv
 	if options != nil {
@@ -920,8 +955,12 @@ func buildAnthropicParams(model *Model, context *TranscriptContext, isOAuthToken
 		compat.SupportsMidConvoToolChanges &&
 		len(initialTools) > 0 &&
 		!HasToolRedefinitions(context.Messages)
+	thinkingDisabled := anthropicThinkingDisabled(model, options)
+	// Effort cannot change between messages while thinking is disabled, so
+	// "off" sends no effort markers.
+	effortMessages := anthropicSupportsMidConvoEffort(model) && !thinkingDisabled
 	managedProvider := ""
-	if anthropicSupportsMidConvoEffort(model) {
+	if effortMessages {
 		managedProvider = model.Provider
 	}
 	converted := convertAnthropicMessages(conversationMessages, isOAuthToken, cacheControl, compat.AllowEmptySignature, managedProvider, nativeToolChanges)
@@ -934,7 +973,7 @@ func buildAnthropicParams(model *Model, context *TranscriptContext, isOAuthToken
 
 	params := jsonx.NewObj()
 	params.Set("model", model.ID)
-	if anthropicSupportsMidConvoEffort(model) {
+	if effortMessages {
 		params.Set("messages", insertThinkingLevelMessages(converted, activeEffort))
 	} else {
 		messages := make([]any, 0, len(converted.messages))
@@ -999,10 +1038,10 @@ func buildAnthropicParams(model *Model, context *TranscriptContext, isOAuthToken
 			}
 		}
 		tools := append(
-			convertAnthropicTools(initialTools, isOAuthToken, compat.SupportsEagerToolInputStreaming, compat.SupportsStrictTools, toolCacheControl),
+			convertAnthropicTools(initialTools, isOAuthToken, compat.SupportsEagerToolInputStreaming, compat.SupportsStrictTools, toolCacheControl, disablePreferredStrictTools),
 			deferredToolPlaceholder(),
 		)
-		for _, convertedTool := range convertAnthropicTools(laterTools, isOAuthToken, compat.SupportsEagerToolInputStreaming, compat.SupportsStrictTools, nil) {
+		for _, convertedTool := range convertAnthropicTools(laterTools, isOAuthToken, compat.SupportsEagerToolInputStreaming, compat.SupportsStrictTools, nil, disablePreferredStrictTools) {
 			if obj, ok := JxObj(convertedTool); ok {
 				obj.Set("defer_loading", true)
 			}
@@ -1012,12 +1051,16 @@ func buildAnthropicParams(model *Model, context *TranscriptContext, isOAuthToken
 	} else {
 		tools := GetCurrentTools(context.Messages)
 		if len(tools) > 0 {
-			params.Set("tools", convertAnthropicTools(tools, isOAuthToken, compat.SupportsEagerToolInputStreaming, compat.SupportsStrictTools, toolCacheControl))
+			params.Set("tools", convertAnthropicTools(tools, isOAuthToken, compat.SupportsEagerToolInputStreaming, compat.SupportsStrictTools, toolCacheControl, disablePreferredStrictTools))
 		}
 	}
 
 	// Thinking configuration.
-	if anthropicSupportsMidConvoEffort(model) {
+	if thinkingDisabled {
+		// No effort is sent, so the model default applies. Anthropic
+		// rejects block_binding with disabled thinking.
+		params.Set("thinking", jsonx.ObjFrom("type", "disabled"))
+	} else if effortMessages {
 		display := AnthropicThinkingDisplaySummarized
 		if options != nil && options.ThinkingDisplay != nil {
 			display = *options.ThinkingDisplay
@@ -1028,36 +1071,29 @@ func buildAnthropicParams(model *Model, context *TranscriptContext, isOAuthToken
 			"block_binding", jsonx.ObjFrom("prefix_mismatch_behavior", "drop_block"),
 		))
 		params.Set("output_config", jsonx.ObjFrom("effort", AnthropicEffortHigh))
-	} else if model.Reasoning {
-		if thinkingEnabled(options) {
-			display := AnthropicThinkingDisplaySummarized
-			if options != nil && options.ThinkingDisplay != nil {
-				display = *options.ThinkingDisplay
+	} else if model.Reasoning && thinkingEnabled(options) {
+		display := AnthropicThinkingDisplaySummarized
+		if options != nil && options.ThinkingDisplay != nil {
+			display = *options.ThinkingDisplay
+		}
+		if anthropicForceAdaptiveThinking(model) {
+			params.Set("thinking", jsonx.ObjFrom("type", "adaptive", "display", display))
+			if options != nil && options.Effort != nil {
+				params.Set("output_config", jsonx.ObjFrom("effort", *options.Effort))
 			}
-			if anthropicForceAdaptiveThinking(model) {
-				params.Set("thinking", jsonx.ObjFrom("type", "adaptive", "display", display))
-				if options != nil && options.Effort != nil {
-					params.Set("output_config", jsonx.ObjFrom("effort", *options.Effort))
-				}
-			} else {
-				budget := 1024.0
-				if options != nil && options.ThinkingBudgetTokens != nil {
-					budget = *options.ThinkingBudgetTokens
-				}
-				if budget == 0 {
-					budget = 1024.0
-				}
-				params.Set("thinking", jsonx.ObjFrom(
-					"type", "enabled",
-					"budget_tokens", budget,
-					"display", display,
-				))
+		} else {
+			budget := 1024.0
+			if options != nil && options.ThinkingBudgetTokens != nil {
+				budget = *options.ThinkingBudgetTokens
 			}
-		} else if options != nil && options.ThinkingEnabled != nil && !*options.ThinkingEnabled {
-			_, present, isNull := anthropicThinkingLevelMapValue(model, ThinkingOff)
-			if !(present && isNull) {
-				params.Set("thinking", jsonx.ObjFrom("type", "disabled"))
+			if budget == 0 {
+				budget = 1024.0
 			}
+			params.Set("thinking", jsonx.ObjFrom(
+				"type", "enabled",
+				"budget_tokens", budget,
+				"display", display,
+			))
 		}
 	}
 
@@ -1088,4 +1124,60 @@ func buildAnthropicParams(model *Model, context *TranscriptContext, isOAuthToken
 
 func thinkingEnabled(options *AnthropicOptions) bool {
 	return options != nil && options.ThinkingEnabled != nil && *options.ThinkingEnabled
+}
+
+// anthropicThinkingDisabled reports an explicit "off" request on a model
+// whose thinking level map does not mark off unsupported (null).
+func anthropicThinkingDisabled(model *Model, options *AnthropicOptions) bool {
+	if !model.Reasoning || options == nil || options.ThinkingEnabled == nil || *options.ThinkingEnabled {
+		return false
+	}
+	_, present, isNull := anthropicThinkingLevelMapValue(model, ThinkingOff)
+	return !(present && isNull)
+}
+
+// anthropicHasPreferredStrictTools reports whether the tool list would send
+// at least one strict tool whose constrained sampling prefers strict.
+func anthropicHasPreferredStrictTools(tools []Tool, supportsStrictTools bool) bool {
+	for index := range tools {
+		tool := &tools[index]
+		config := ParseConstrainedSampling(tool.ConstrainedSampling)
+		if config == nil || config.Type != "json_schema" || config.Strict != "prefer" {
+			continue
+		}
+		strict, err := ResolveJSONSchemaStrictSampling(tool, supportsStrictTools)
+		if err == nil && strict {
+			return true
+		}
+	}
+	return false
+}
+
+// anthropicStrictToolsFallbackMessages are the 400 rejection wordings that
+// downgrade a request to non-strict preferred tools (#10915).
+var anthropicStrictToolsFallbackMessages = []string{
+	"The compiled grammar is too large",
+	"Too many strict tools (",
+	"Schemas contains too many parameters with union types (",
+}
+
+// anthropicStrictToolsFallbackError reports whether err is a 400
+// invalid_request_error rejection matching the strict-tool fallback wording.
+func anthropicStrictToolsFallbackError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	if !strings.Contains(message, "invalid_request_error") {
+		return false
+	}
+	if !strings.Contains(message, "400") {
+		return false
+	}
+	for _, wording := range anthropicStrictToolsFallbackMessages {
+		if strings.Contains(message, wording) {
+			return true
+		}
+	}
+	return false
 }

@@ -218,3 +218,29 @@ func TestMessageCodecOptionalAbsence(t *testing.T) {
 		t.Fatalf("system = %s", got)
 	}
 }
+
+// Port of json-parse.test.ts invalid/valid \u escape cases (#10868).
+func TestParseStreamingJSONUnicodeEscapes(t *testing.T) {
+	keep := ParseStreamingJSONObject(`{"text":"\url{x}"}`)
+	if textOf(keep, "text") != `\url{x}` {
+		t.Fatalf("text = %v", textOf(keep, "text"))
+	}
+	multi := ParseStreamingJSONObject(`{"path":"a.tex","content":"\usepackage{x}","mode":"w"}`)
+	if textOf(multi, "path") != "a.tex" || textOf(multi, "content") != `\usepackage{x}` || textOf(multi, "mode") != "w" {
+		t.Fatalf("fields = %v", multi)
+	}
+	valid := ParseStreamingJSONObject(`{"text":"caf\u00e9 \url"}`)
+	if textOf(valid, "text") != `café \url` {
+		t.Fatalf("text = %v", textOf(valid, "text"))
+	}
+	cutoff := ParseStreamingJSONObject(`{"text":"ab\u00`)
+	if textOf(cutoff, "text") != "ab" {
+		t.Fatalf("cutoff = %v", textOf(cutoff, "text"))
+	}
+}
+
+func textOf(obj *jsonx.Obj, key string) string {
+	value, _ := obj.Get(key)
+	text, _ := value.(string)
+	return text
+}

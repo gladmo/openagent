@@ -128,7 +128,7 @@ func (a *AnthropicMessagesAPI) StreamAnthropic(model *Model, context *Transcript
 
 	go func() {
 		providerThinkingLevel := ""
-		if anthropicSupportsMidConvoEffort(model) {
+		if anthropicSupportsMidConvoEffort(model) && !anthropicThinkingDisabled(model, options) {
 			providerThinkingLevel = AnthropicEffortHigh
 			if options != nil && options.Effort != nil {
 				providerThinkingLevel = *options.Effort
@@ -220,18 +220,7 @@ func (a *AnthropicMessagesAPI) run(
 	}
 	isOAuth := client.IsOAuthToken
 
-	params := buildAnthropicParams(model, normalizedContext, isOAuth, options)
-	if options != nil && options.OnPayload != nil {
-		if next := options.OnPayload(params, model); next != nil {
-			if obj, ok := JxObj(next); ok {
-				obj.Set("stream", true)
-				params = obj
-			}
-		}
-	}
-
 	requestHeaders := buildAnthropicRequestHeaders(client)
-	payload := []byte(jsonx.Stringify(params))
 
 	var signal *abort.Signal
 	var maxRetries, maxRetryDelayMs, timeoutMs *float64
@@ -244,13 +233,40 @@ func (a *AnthropicMessagesAPI) run(
 		fetch = options.Fetch
 	}
 
-	sse, err := postAnthropicMessages(client, requestHeaders, payload, &ProviderRetryOptions{
-		MaxRetries:      maxRetries,
-		MaxRetryDelayMs: maxRetryDelayMs,
-		Signal:          signal,
-	}, timeoutMs, fetch)
-	if err != nil {
-		return anthropicTransportError(err, options)
+	// Retry once with non-strict preferred tools when Anthropic rejects the
+	// request for its strict-tool limits (#10915).
+	disablePreferredStrictTools := false
+	var sse *SSEStreamResponse
+	for {
+		params := buildAnthropicParams(model, normalizedContext, isOAuth, options, disablePreferredStrictTools)
+		hasPreferredStrictTools := !disablePreferredStrictTools &&
+			anthropicHasPreferredStrictTools(GetCurrentTools(normalizedContext.Messages), getAnthropicCompat(model).SupportsStrictTools)
+		if options != nil && options.OnPayload != nil {
+			if next := options.OnPayload(params, model); next != nil {
+				if obj, ok := JxObj(next); ok {
+					obj.Set("stream", true)
+					params = obj
+				}
+			}
+		}
+		payload := []byte(jsonx.Stringify(params))
+		attempt, err := postAnthropicMessages(client, requestHeaders, payload, &ProviderRetryOptions{
+			MaxRetries:      maxRetries,
+			MaxRetryDelayMs: maxRetryDelayMs,
+			Signal:          signal,
+		}, timeoutMs, fetch)
+		if err == nil {
+			sse = attempt
+			break
+		}
+		// Only downgrade a rejected request, never an already-started
+		// stream.
+		if signal != nil && signal.Aborted() || disablePreferredStrictTools || !hasPreferredStrictTools || !anthropicStrictToolsFallbackError(err) {
+			return anthropicTransportError(err, options)
+		}
+		disablePreferredStrictTools = true
+		AppendAssistantMessageDiagnostic(output, CreateAssistantMessageDiagnostic(
+			"anthropic_strict_tools_fallback", err, jsonx.ObjFrom("reason", "strict_tool_limits_exceeded")))
 	}
 	defer sse.Stream.Close()
 	if options != nil && options.OnResponse != nil {
@@ -460,7 +476,11 @@ func (a *AnthropicMessagesAPI) run(
 			case "thinking":
 				stream.Push(&EventThinkingEnd{ContentIndex: state.contentIndex, Content: state.thinking.Thinking, Partial: output})
 			case "toolCall":
-				state.toolCall.Arguments = ParseStreamingJSONObject(state.partialJSON)
+				parsed, argumentsError := ParseToolCallArguments(state.partialJSON)
+				state.toolCall.Arguments = parsed
+				if argumentsError != "" {
+					state.toolCall.ArgumentsError = &argumentsError
+				}
 				stream.Push(&EventToolCallEnd{ContentIndex: state.contentIndex, ToolCall: state.toolCall, Partial: output})
 			}
 

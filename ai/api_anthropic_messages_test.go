@@ -17,6 +17,7 @@ import (
 
 	"github.com/gladmo/openagent/abort"
 	"github.com/gladmo/openagent/jsonx"
+	"github.com/gladmo/openagent/typebox"
 )
 
 type sseFixture struct {
@@ -539,5 +540,146 @@ func TestAnthropicStreamRetryOn429(t *testing.T) {
 	}
 	if attempts != 2 {
 		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+}
+
+// Port of anthropic-error-tool-result-images.test.ts (#10794): error tool
+// result images move after the turn's tool results.
+func TestAnthropicErrorToolResultImages(t *testing.T) {
+	var capture capturedRequest
+	server := sseServer(t, minimalAnthropicEvents(), &capture)
+	model := testAnthropicModel(server.URL)
+	model.Input = []string{"text", "image"}
+	apiKey := "sk-test"
+
+	assistant := &AssistantMessage{
+		Content: []ContentBlock{
+			&ToolCall{ID: "call-1", Name: "codemode", Arguments: jsonx.NewObj()},
+			&ToolCall{ID: "call-2", Name: "read", Arguments: jsonx.NewObj()},
+		},
+		API: "anthropic-messages", Provider: model.Provider, Model: model.ID, StopReason: StopToolUse, TimestampMs: 1,
+	}
+	context := &TranscriptContext{Messages: []Message{
+		&UserMessage{Content: StringContent("Show the screenshots"), TimestampMs: 1},
+		assistant,
+		&ToolResultMessage{ToolCallID: "call-1", ToolName: "codemode", IsError: true, TimestampMs: 2, Content: []ContentBlock{
+			TextContent{Text: "Script failed"},
+			ImageContent{Data: "AAAA", MimeType: "image/png"},
+			ImageContent{Data: "CCCC", MimeType: "image/png"},
+			TextContent{Text: "Script error"},
+		}},
+		&ToolResultMessage{ToolCallID: "call-2", ToolName: "read", TimestampMs: 3, Content: []ContentBlock{
+			ImageContent{Data: "BBBB", MimeType: "image/png"},
+		}},
+	}}
+	_, _ = collectStream(t, AnthropicMessagesApi().StreamAnthropic(model, context, &AnthropicOptions{
+		StreamOptions: StreamOptions{APIKey: &apiKey},
+	}))
+
+	var payload struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(capture.body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Messages) < 3 {
+		t.Fatalf("messages = %d", len(payload.Messages))
+	}
+	turn := payload.Messages[2]
+	if turn.Role != "user" {
+		t.Fatalf("turn role = %s", turn.Role)
+	}
+	var blocks []map[string]any
+	if err := json.Unmarshal(turn.Content, &blocks); err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 5 {
+		t.Fatalf("blocks = %v", blocks)
+	}
+	first := blocks[0]
+	if first["type"] != "tool_result" || first["tool_use_id"] != "call-1" || first["is_error"] != true {
+		t.Fatalf("first = %v", first)
+	}
+	if content, ok := first["content"].(string); !ok || content != "Script failed\n(image attached after the tool results)\nScript error" {
+		t.Fatalf("split content = %v", first["content"])
+	}
+	second := blocks[1]
+	if second["type"] != "tool_result" || second["tool_use_id"] != "call-2" || second["is_error"] != false {
+		t.Fatalf("second = %v", second)
+	}
+	if blocks[2]["type"] != "text" || blocks[2]["text"] != "Images from the error result of tool call call-1 (codemode):" {
+		t.Fatalf("caption = %v", blocks[2])
+	}
+	if blocks[3]["type"] != "image" || blocks[4]["type"] != "image" {
+		t.Fatalf("images = %v %v", blocks[3], blocks[4])
+	}
+	if source, ok := blocks[3]["source"].(map[string]any); !ok || source["data"] != "AAAA" {
+		t.Fatalf("image data = %v", blocks[3])
+	}
+}
+
+// Port of anthropic-strict-tool-fallback.test.ts (#10915): a 400 strict-tool
+// limit rejection downgrades the preferred-strict tools and retries once.
+func TestAnthropicStrictToolsFallback(t *testing.T) {
+	requests := 0
+	var secondStrict any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			body, _ := io.ReadAll(r.Body)
+			_ = body
+			w.Header().Set("content-type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"type":"error","error":{"type":"invalid_request_error","message":"Too many strict tools (25 allowed, 30 given)"}}`))
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		var params map[string]any
+		_ = json.Unmarshal(body, &params)
+		if tools, ok := params["tools"].([]any); ok && len(tools) > 0 {
+			secondStrict = tools[0].(map[string]any)["strict"]
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		for _, fixture := range minimalAnthropicEvents() {
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", fixture.event, fixture.data)
+		}
+		flusher.Flush()
+	}))
+	defer server.Close()
+	model := testAnthropicModel(server.URL)
+	model.Reasoning = false
+	model.Compat = jsonx.ObjFrom("supportsStrictTools", true)
+	tool := Tool{Name: "echo", Description: "Echo", Parameters: typebox.Object(nil),
+		ConstrainedSampling: ConstrainedSamplingConfig{Type: "json_schema", Strict: "prefer"}}
+	systemPrompt := "You test"
+	initial := CreateInitialSystemMessage(&systemPrompt, []Tool{tool})
+	apiKey := "sk-test"
+	events, result := collectStream(t, AnthropicMessagesApi().StreamAnthropic(model, &TranscriptContext{
+		Messages: []Message{initial, &UserMessage{Content: StringContent("hi"), TimestampMs: 1}},
+	}, &AnthropicOptions{StreamOptions: StreamOptions{APIKey: &apiKey}}))
+	if requests != 2 {
+		t.Fatalf("requests = %d", requests)
+	}
+	if secondStrict != nil {
+		t.Fatalf("second request strict = %v", secondStrict)
+	}
+	if result.StopReason != StopStop {
+		t.Fatalf("stop = %s (%v)", result.StopReason, result.ErrorMessage)
+	}
+	if len(events) == 0 {
+		t.Fatal("no events")
+	}
+	found := false
+	for _, diag := range result.Diagnostics {
+		if diag.Type == "anthropic_strict_tools_fallback" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("diagnostics = %+v", result.Diagnostics)
 	}
 }
