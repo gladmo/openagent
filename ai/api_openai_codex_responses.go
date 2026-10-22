@@ -290,7 +290,11 @@ func buildCodexRequestBody(
 	supportsOpenAIGrammarTools := JxCompatBool(model, "supportsOpenAIGrammarTools", false)
 	supportsAdditionalTools := JxCompatBool(model, "supportsAdditionalTools", false)
 	supportsToolSearch := JxCompatBool(model, "supportsToolSearch", false)
-	transcriptTools := ResolveTranscriptTools(context.Messages, supportsAdditionalTools || supportsToolSearch)
+	transcriptTools := ResolveTranscriptTools(context.Messages, GetResponsesToolSupport(
+		JxCompatBool(model, "supportsMidConvoSystemMessages", false),
+		supportsAdditionalTools,
+		supportsToolSearch,
+	))
 	messages, err := convertResponsesMessages(model, context, codexToolCallProviders, &ConvertResponsesMessagesOptions{
 		IncludeSystemPrompt:            false,
 		HasIncludeSystemPrompt:         true,

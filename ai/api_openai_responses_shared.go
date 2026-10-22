@@ -5,6 +5,7 @@ package ai
 // used by the openai-responses, azure-openai-responses, and codex clients.
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/gladmo/openagent/jsonx"
@@ -94,7 +95,15 @@ type ConvertResponsesMessagesOptions struct {
 	SupportsMidConvoSystemMessages bool
 	SupportsAdditionalTools        bool
 	SupportsToolSearch             bool
-	ToolOptions                    *ConvertResponsesToolsOptions
+	// ConfigurationUpdateEffort is the effort for the reply being generated.
+	// When set, the thinking level is sent as configuration_update items
+	// instead of a changing reasoning.effort, which would invalidate the
+	// prompt cache. Each item sets the effort from that point on: one goes
+	// before every earlier reply with the level recorded on it
+	// (providerThinkingLevel), and one with this effort goes at the end.
+	// Earlier input therefore never changes.
+	ConfigurationUpdateEffort string
+	ToolOptions               *ConvertResponsesToolsOptions
 }
 
 // ConvertResponsesToolsOptions mirrors the TS interface.
@@ -132,6 +141,53 @@ func buildForeignResponsesItemID(itemID string) string {
 // convertResponsesMessages ports convertResponsesMessages. Returns the
 // Response input items; an error surfaces JSON.parse failures on thinking
 // signatures (TS throws out of the stream pump).
+// GetResponsesToolSupport reports how a Responses transport expresses tool
+// changes.
+//
+// additional_tools items accumulate: a later item adds tools and replaces
+// same-name definitions from earlier items, but it cannot replace a
+// top-level tool and cannot remove any tool. Like Codex, every tool is
+// therefore declared in additional_tools items, starting with one at the
+// head of the input, and removals are announced as text. Synthetic tool
+// search can only add tools. Without mid-conversation system messages there
+// is nothing to anchor.
+func GetResponsesToolSupport(supportsMidConvoSystemMessages, supportsAdditionalTools, supportsToolSearch bool) TranscriptToolSupport {
+	if supportsMidConvoSystemMessages && supportsAdditionalTools {
+		return ToolSupportChanges
+	}
+	if supportsToolSearch {
+		return ToolSupportAdditions
+	}
+	return ToolSupportNone
+}
+
+// renderIncrementalToolsNotice precedes every additional_tools item after
+// the first. Without it, models read the latest item as the complete tool
+// set once a removal was announced; Codex precedes its incremental tool
+// batches with the same guidance. Restating the tools that are still
+// unavailable keeps smaller models from calling them again after later
+// loads.
+func renderIncrementalToolsNotice(unavailableTools map[string]bool) string {
+	notice := "This is an incremental tools update. Previously declared tools remain available unless explicitly marked unavailable. A tool declared again here is available again, and its latest definition replaces the earlier one."
+	if len(unavailableTools) == 0 {
+		return notice
+	}
+	names := make([]string, 0, len(unavailableTools))
+	for name := range unavailableTools {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return notice + "\nStill unavailable: " + strings.Join(names, ", ") + "."
+}
+
+func renderToolRemovalNotice(names []string) string {
+	lines := make([]string, 0, len(names))
+	for _, name := range names {
+		lines = append(lines, "- "+name)
+	}
+	return "The following tools are no longer available. Do not call them:\n" + strings.Join(lines, "\n")
+}
+
 func convertResponsesMessages(
 	model *Model,
 	context *TranscriptContext,
@@ -169,24 +225,47 @@ func convertResponsesMessages(
 	transformedMessages := TransformMessages(normalizedContext.Messages, model, func(id string, _ *Model, source *AssistantMessage) string {
 		return normalizeToolCallID(id, source)
 	})
-	transcriptTools := ResolveTranscriptTools(
-		normalizedContext.Messages,
-		opts.SupportsAdditionalTools || opts.SupportsToolSearch,
-	)
+	toolSupport := GetResponsesToolSupport(opts.SupportsMidConvoSystemMessages, opts.SupportsAdditionalTools, opts.SupportsToolSearch)
+	transcriptTools := ResolveTranscriptTools(normalizedContext.Messages, toolSupport)
+	declaredAdditionalTools := false
+	// unavailableTools holds tools announced as removed and not declared
+	// again since.
+	unavailableTools := map[string]bool{}
+	supportsDeveloperRole := true
+	if compat, ok := JxCompatObj(model); ok {
+		if value, present := JxBool(compat, "supportsDeveloperRole"); present {
+			supportsDeveloperRole = value
+		}
+	}
+	instructionRole := "system"
+	if model.Reasoning && supportsDeveloperRole {
+		instructionRole = "developer"
+	}
+	instructionRoleForTools := func() string { return instructionRole }
 	appendSystemToolAdditions := func(message *SystemMessage, seed string) {
-		tools := []Tool{}
-		if transcriptTools.AnchorsAdditions {
-			tools = message.ToolsAdded
+		tools := message.ToolsAdded
+		for _, tool := range tools {
+			delete(unavailableTools, tool.Name)
 		}
 		if len(tools) == 0 {
 			return
 		}
-		if opts.SupportsAdditionalTools {
+		if toolSupport == ToolSupportChanges {
+			if declaredAdditionalTools {
+				messages = append(messages, jsonx.ObjFrom("role", instructionRoleForTools(), "content", renderIncrementalToolsNotice(unavailableTools)))
+			}
+			declaredAdditionalTools = true
 			messages = append(messages, jsonx.ObjFrom(
 				"type", "additional_tools",
 				"role", "developer",
 				"tools", convertResponsesTools(tools, opts.ToolOptions),
 			))
+			return
+		}
+		if toolSupport != ToolSupportAdditions {
+			return
+		}
+		if !opts.SupportsToolSearch {
 			return
 		}
 		if !opts.SupportsToolSearch {
@@ -217,31 +296,64 @@ func convertResponsesMessages(
 	if opts.HasIncludeSystemPrompt {
 		includeInitialSystemMessage = opts.IncludeSystemPrompt
 	}
-	supportsDeveloperRole := true
-	if compat, ok := JxCompatObj(model); ok {
-		if value, present := JxBool(compat, "supportsDeveloperRole"); present {
-			supportsDeveloperRole = value
-		}
-	}
-	instructionRole := "system"
-	if model.Reasoning && supportsDeveloperRole {
-		instructionRole = "developer"
+	pushConfigurationUpdate := func(effort string) {
+		messages = append(messages, jsonx.ObjFrom(
+			"type", "configuration_update",
+			"reasoning", jsonx.ObjFrom("effort", effort),
+		))
 	}
 
 	msgIndex := 0
 	sourceIndex := 0
+	systemIndex := 0
 	for _, msg := range transformedMessages {
 		isLeadingSystemMessage := sourceIndex == 0 && msg.Role() == "system"
 		sourceIndex++
 		switch t := msg.(type) {
 		case *SystemMessage:
-			if !isLeadingSystemMessage {
+			// transformMessages keeps system messages in order, so their
+			// position matches the transcript.
+			anchorsToolChanges := systemIndex >= transcriptTools.FoldedSystemMessages
+			systemIndex++
+			if anchorsToolChanges {
 				appendSystemToolAdditions(t, "system:"+itoaStatus(msgIndex))
 			}
 			if !isLeadingSystemMessage || includeInitialSystemMessage {
-				text := RenderSystemMessageUpdate(t)
+				parts := []string{RenderSystemMessageUpdate(t)}
 				if isLeadingSystemMessage {
-					text = GetSystemMessageText(t)
+					parts = []string{GetSystemMessageText(t)}
+				}
+				if anchorsToolChanges {
+					// A redefinition is a removal plus an addition of the
+					// same name; only true removals are announced.
+					added := map[string]bool{}
+					for _, tool := range t.ToolsAdded {
+						added[tool.Name] = true
+					}
+					removed := []string{}
+					for _, ref := range t.ToolsRemoved {
+						if !added[ref.Name] {
+							removed = append(removed, ref.Name)
+						}
+					}
+					if len(removed) > 0 {
+						parts = append(parts, renderToolRemovalNotice(removed))
+					}
+					// Recorded after this message's additions, whose notice
+					// precedes this removal notice.
+					for _, name := range removed {
+						unavailableTools[name] = true
+					}
+				}
+				text := ""
+				for _, part := range parts {
+					if len(part) == 0 {
+						continue
+					}
+					if text != "" {
+						text += "\n\n"
+					}
+					text += part
 				}
 				if len(text) > 0 {
 					messages = append(messages, jsonx.ObjFrom("role", instructionRole, "content", SanitizeSurrogates(text)))
@@ -282,6 +394,9 @@ func convertResponsesMessages(
 			isSameModel := isSameProviderAndAPI && t.Model == model.ID
 			isDifferentModel := isSameProviderAndAPI && t.Model != model.ID
 			textBlockIndex := 0
+			if opts.ConfigurationUpdateEffort != "" && isSameModel && t.ProviderThinkingLevel != nil {
+				pushConfigurationUpdate(*t.ProviderThinkingLevel)
+			}
 
 			for _, block := range t.Content {
 				switch b := block.(type) {
@@ -413,6 +528,9 @@ func convertResponsesMessages(
 		}
 	}
 
+	if opts.ConfigurationUpdateEffort != "" {
+		pushConfigurationUpdate(opts.ConfigurationUpdateEffort)
+	}
 	return messages, nil
 }
 

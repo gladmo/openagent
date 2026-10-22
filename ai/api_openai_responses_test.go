@@ -372,3 +372,104 @@ func mustJSON(value any) string {
 	}
 	return string(encoded)
 }
+
+// Port of openai-responses-mid-convo-effort.test.ts (#10930): the thinking
+// level rides configuration_update items so reasoning.effort stays constant
+// and earlier input only appends.
+func TestResponsesConfigurationUpdateEffort(t *testing.T) {
+	thinkingLevels := ThinkingLevelMap{
+		ThinkingOff: strPtrResponses("none"), ThinkingLow: strPtrResponses("low"),
+		ThinkingMedium: strPtrResponses("medium"), ThinkingHigh: strPtrResponses("high"),
+	}
+	newModel := func(baseURL string) *Model {
+		model := openaiResponsesModel(baseURL)
+		model.ID = "gpt-6-luna"
+		model.Reasoning = true
+		model.ThinkingLevelMap = thinkingLevels
+		model.Compat = jsonx.ObjFrom("supportsMidConvoEffort", true)
+		return model
+	}
+	events := []sseFixture{
+		{"response.created", `{"type":"response.created","response":{"id":"resp_1"}}`},
+		{"response.output_item.added", `{"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"answer","annotations":[]}]}}`},
+		{"response.output_item.done", `{"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"answer","annotations":[]}]}}`},
+		{"response.completed", `{"type":"response.completed","response":{"id":"resp_1","status":"completed"}}`},
+	}
+	run := func(messages []Message, effort string) (map[string]any, *AssistantMessage) {
+		var capture capturedRequest
+		server := responsesServer(t, events, &capture)
+		model := newModel(server.URL)
+		apiKey := "sk-test"
+		options := &OpenAIResponsesOptions{
+			StreamOptions:   StreamOptions{APIKey: &apiKey},
+			ReasoningEffort: &effort,
+		}
+		result := OpenAIResponsesApi().StreamResponses(model, &TranscriptContext{Messages: messages}, options).Result()
+		var payload map[string]any
+		if err := json.Unmarshal(capture.body, &payload); err != nil {
+			t.Fatal(err)
+		}
+		return payload, result
+	}
+	isUpdate := func(item any) (map[string]any, bool) {
+		obj, ok := item.(map[string]any)
+		if !ok || obj["type"] != "configuration_update" {
+			return nil, false
+		}
+		return obj, true
+	}
+
+	history := []Message{&UserMessage{Content: StringContent("one"), TimestampMs: 1}}
+	firstPayload, first := run(history, ThinkingHigh)
+	input := firstPayload["input"].([]any)
+	if len(input) != 2 {
+		t.Fatalf("first input = %v", input)
+	}
+	if update, ok := isUpdate(input[1]); !ok {
+		t.Fatalf("first input = %v", input)
+	} else if reasoning := update["reasoning"].(map[string]any); reasoning["effort"] != ThinkingHigh {
+		t.Fatalf("update = %v", update)
+	}
+	if reasoning := firstPayload["reasoning"].(map[string]any); reasoning["effort"] != "medium" {
+		t.Fatalf("request effort = %v", reasoning)
+	}
+	if first.ProviderThinkingLevel == nil || *first.ProviderThinkingLevel != ThinkingHigh {
+		t.Fatalf("providerThinkingLevel = %v", first.ProviderThinkingLevel)
+	}
+
+	// History grows; earlier input stays a prefix.
+	history = append(history, first, &UserMessage{Content: StringContent("two"), TimestampMs: 2})
+	secondPayload, second := run(history, ThinkingHigh)
+	secondInput := secondPayload["input"].([]any)
+	if len(secondInput) < len(input) {
+		t.Fatalf("second input shrank: %v", secondInput)
+	}
+	for i := range input {
+		if fmt.Sprintf("%v", input[i]) != fmt.Sprintf("%v", secondInput[i]) {
+			t.Fatalf("prefix changed at %d:\n%v\n%v", i, input[i], secondInput[i])
+		}
+	}
+
+	history = append(history, second, &UserMessage{Content: StringContent("three"), TimestampMs: 3})
+	thirdPayload, third := run(history, ThinkingLow)
+	thirdInput := thirdPayload["input"].([]any)
+	var updates []string
+	for _, item := range thirdInput {
+		if update, ok := isUpdate(item); ok {
+			updates = append(updates, update["reasoning"].(map[string]any)["effort"].(string))
+		}
+	}
+	if len(updates) != 3 || updates[0] != ThinkingHigh || updates[1] != ThinkingHigh || updates[2] != ThinkingLow {
+		t.Fatalf("updates = %v", updates)
+	}
+	if last, ok := isUpdate(thirdInput[len(thirdInput)-1]); !ok {
+		t.Fatalf("last item = %v", thirdInput[len(thirdInput)-1])
+	} else if last["reasoning"].(map[string]any)["effort"] != ThinkingLow {
+		t.Fatalf("last update = %v", last)
+	}
+	if third.ProviderThinkingLevel == nil || *third.ProviderThinkingLevel != ThinkingLow {
+		t.Fatalf("third providerThinkingLevel = %v", third.ProviderThinkingLevel)
+	}
+}
+
+func strPtrResponses(value string) *string { return &value }

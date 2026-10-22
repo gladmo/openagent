@@ -27,6 +27,7 @@ type openAIResponsesCompat struct {
 	SupportsToolSearch              bool
 	SupportsExplicitPromptCacheMode bool
 	SupportsMaxOutputTokens         bool
+	SupportsMidConvoEffort          bool
 }
 
 func detectResponsesSessionAffinityFormat(model *Model) string {
@@ -48,6 +49,7 @@ func getOpenAIResponsesCompat(model *Model) openAIResponsesCompat {
 		SupportsToolSearch:              JxCompatBool(model, "supportsToolSearch", false),
 		SupportsExplicitPromptCacheMode: JxCompatBool(model, "supportsExplicitPromptCacheMode", false),
 		SupportsMaxOutputTokens:         JxCompatBool(model, "supportsMaxOutputTokens", true),
+		SupportsMidConvoEffort:          JxCompatBool(model, "supportsMidConvoEffort", false),
 	}
 	if format := compatString(model, "sessionAffinityFormat"); format != "" {
 		compat.SessionAffinityFormat = format
@@ -236,7 +238,12 @@ func (a *OpenAIResponsesAPI) run(
 	)
 	headers := createResponsesClient(model, normalizedContext, apiKey, optionsHeaders, sessionID, compat, optionsIdentity(options))
 
-	params := buildResponsesParams(model, normalizedContext, options, compat, grammarToolInputProperties, cacheRetention)
+	configurationUpdateEffort := getConfigurationUpdateEffort(model, options, apiKey, compat)
+	if configurationUpdateEffort != "" {
+		level := configurationUpdateEffort
+		output.ProviderThinkingLevel = &level
+	}
+	params := buildResponsesParams(model, normalizedContext, options, compat, grammarToolInputProperties, cacheRetention, configurationUpdateEffort)
 	if options != nil && options.OnPayload != nil {
 		if next := options.OnPayload(params, model); next != nil {
 			if obj, ok := JxObj(next); ok {
@@ -348,6 +355,37 @@ func createResponsesClient(model *Model, context *TranscriptContext, apiKey stri
 	return headers
 }
 
+// configurationUpdateRequestEffort is fixed while configuration_update
+// items carry the thinking level, keeping the request prefix stable.
+const configurationUpdateRequestEffort = "medium"
+
+// isChatGPTSignIn reports an OpenAI credential that is not an API key: a
+// Sign in with ChatGPT access token sent directly to OpenAI.
+func isChatGPTSignIn(model *Model, apiKey string) bool {
+	return model.Provider == "openai" &&
+		model.BaseURL == "https://api.openai.com/v1" &&
+		apiKey != "" &&
+		!strings.HasPrefix(apiKey, "sk-")
+}
+
+// getConfigurationUpdateEffort resolves the per-reply effort sent as
+// configuration_update items: only on models that support mid-conversation
+// effort changes, with an explicit requested level, and not over Sign in
+// with ChatGPT (which rejects configuration_update items).
+func getConfigurationUpdateEffort(model *Model, options *OpenAIResponsesOptions, apiKey string, compat openAIResponsesCompat) string {
+	if !compat.SupportsMidConvoEffort || options == nil || options.ReasoningEffort == nil {
+		return ""
+	}
+	if isChatGPTSignIn(model, apiKey) {
+		return ""
+	}
+	requested := *options.ReasoningEffort
+	if mapped, present, isNull := thinkingLevelMapLookup(model, requested); present && !isNull {
+		return mapped
+	}
+	return requested
+}
+
 func buildResponsesParams(
 	model *Model,
 	context *TranscriptContext,
@@ -355,16 +393,18 @@ func buildResponsesParams(
 	compat openAIResponsesCompat,
 	grammarToolInputProperties map[string]string,
 	cacheRetention string,
+	configurationUpdateEffort string,
 ) *jsonx.Obj {
 	transcriptTools := ResolveTranscriptTools(
 		context.Messages,
-		compat.SupportsAdditionalTools || compat.SupportsToolSearch,
+		GetResponsesToolSupport(compat.SupportsMidConvoSystemMessages, compat.SupportsAdditionalTools, compat.SupportsToolSearch),
 	)
 	messages, err := convertResponsesMessages(model, context, openAIToolCallProviders, &ConvertResponsesMessagesOptions{
 		GrammarToolInputProperties:     grammarToolInputProperties,
 		SupportsMidConvoSystemMessages: compat.SupportsMidConvoSystemMessages,
 		SupportsAdditionalTools:        compat.SupportsAdditionalTools,
 		SupportsToolSearch:             compat.SupportsToolSearch,
+		ConfigurationUpdateEffort:      configurationUpdateEffort,
 		ToolOptions: &ConvertResponsesToolsOptions{
 			SupportsStrictMode:         compat.SupportsStrictMode,
 			SupportsOpenAIGrammarTools: compat.SupportsOpenAIGrammarTools,
@@ -443,6 +483,11 @@ func buildResponsesParams(
 				} else {
 					effort = reasoningEffort
 				}
+			}
+			if configurationUpdateEffort != "" {
+				// configuration_update items carry the level; the request
+				// effort stays constant so the cached prefix never changes.
+				effort = configurationUpdateRequestEffort
 			}
 			summary := "auto"
 			if options != nil && options.ReasoningSummary != nil && *options.ReasoningSummary != "" {

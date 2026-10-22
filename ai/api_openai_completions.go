@@ -515,7 +515,7 @@ func convertOpenAICompletionsMessages(
 	})
 	transcriptTools := ResolveTranscriptTools(
 		normalizedContext.Messages,
-		compat.SupportsMidConvoSystemMessages && compat.SupportsMidConvoToolAdditions,
+		completionsToolSupport(compat),
 	)
 	instructionRole := "system"
 	if model.Reasoning && compat.SupportsDeveloperRole {
@@ -523,6 +523,7 @@ func convertOpenAICompletionsMessages(
 	}
 
 	lastRole := ""
+	systemIndex := 0
 	for i := 0; i < len(transformedMessages); i++ {
 		msg := transformedMessages[i]
 		if compat.RequiresAssistantAfterToolResult && lastRole == "toolResult" {
@@ -537,10 +538,13 @@ func convertOpenAICompletionsMessages(
 
 		switch t := msg.(type) {
 		case *SystemMessage:
+			// transformMessages keeps system messages in order, so their
+			// position matches the transcript.
 			addedTools := []Tool{}
-			if i > 0 && transcriptTools.AnchorsAdditions {
+			if systemIndex >= transcriptTools.FoldedSystemMessages {
 				addedTools = t.ToolsAdded
 			}
+			systemIndex++
 			if len(addedTools) > 0 {
 				params = append(params, jsonx.ObjFrom(
 					"role", "system",
@@ -1050,7 +1054,7 @@ func buildOpenAICompletionsParams(
 ) *jsonx.Obj {
 	transcriptTools := ResolveTranscriptTools(
 		context.Messages,
-		compat.SupportsMidConvoSystemMessages && compat.SupportsMidConvoToolAdditions,
+		completionsToolSupport(compat),
 	)
 	messages := convertOpenAICompletionsMessages(model, context, compat, &ConvertOpenAICompletionsMessagesOptions{
 		GrammarToolInputProperties: grammarToolInputProperties,
@@ -1383,4 +1387,14 @@ func optionsSamplingParams(options *OpenAICompletionsOptions) map[string]any {
 		return nil
 	}
 	return options.SamplingParams
+}
+
+// completionsToolSupport mirrors the completions transports' support:
+// Kimi-style in-place additions when mid-conversation system messages and
+// tool additions both work, else the top-level tool list only.
+func completionsToolSupport(compat openAICompletionsCompat) TranscriptToolSupport {
+	if compat.SupportsMidConvoSystemMessages && compat.SupportsMidConvoToolAdditions {
+		return ToolSupportAdditions
+	}
+	return ToolSupportNone
 }
