@@ -213,7 +213,7 @@ func jsonxStringifyForTest(v any) (string, error) {
 
 func TestStartAiSpanBindsContext(t *testing.T) {
 	recorder := telemetry.NewInMemoryTelemetryContext()
-	ctx := WithTelemetryContext(recorder, BackgroundContext)
+	ctx := withRecorderSpan(t, recorder, BackgroundContext)
 	result, err := StartAiSpan(AiSpanRequest, telemetry.SpanAttributes{
 		"pi.ai.operation": "stream",
 		"pi.ai.provider":  "faux",
@@ -230,8 +230,31 @@ func TestStartAiSpanBindsContext(t *testing.T) {
 	if err != nil || result != "done" {
 		t.Fatalf("result = %v err = %v", result, err)
 	}
-	spans := recorder.GetSpans()
-	if len(spans) != 1 || spans[0].Name != AiSpanRequest {
-		t.Fatalf("spans = %+v", spans)
+	var span *telemetry.RecordedTelemetrySpan
+	for i := range recorder.GetSpans() {
+		if recorder.GetSpans()[i].Name == AiSpanRequest {
+			span = &recorder.GetSpans()[i]
+		}
 	}
+	if span == nil {
+		t.Fatalf("spans = %+v", recorder.GetSpans())
+	}
+}
+
+// withRecorderSpan derives a context whose telemetry parent is a real span
+// on the recorder (withTelemetry takes spans). The span stays open until the
+// test finishes.
+func withRecorderSpan(t *testing.T, recorder *telemetry.InMemoryTelemetryContext, parent Context) Context {
+	t.Helper()
+	ctxBox := make(chan Context, 1)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	go func() {
+		_, _ = recorder.StartSpan(telemetry.SpanOptions{Name: "test-parent"}, func(span telemetry.TelemetrySpan) (any, error) {
+			ctxBox <- WithTelemetryContext(span, parent)
+			<-release
+			return nil, nil
+		})
+	}()
+	return <-ctxBox
 }

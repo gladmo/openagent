@@ -60,7 +60,7 @@ type FetchResponse struct {
 // values; onPayload may return a replacement payload (nil keeps it).
 type StreamOptions struct {
 	Signal                    *abort.Signal
-	TelemetryContext          telemetry.TelemetryContext
+	Telemetry                 telemetry.TelemetrySpan
 	APIKey                    *string
 	Fetch                     FetchFunction
 	Env                       ProviderEnv
@@ -73,6 +73,7 @@ type StreamOptions struct {
 	OnProviderStreamEvent     func(data any, model *Model)
 	Temperature               *float64
 	SamplingParams            map[string]any
+	Reasoning                 *string
 	MaxTokens                 *float64
 	Transport                 *string
 	CacheRetention            *string
@@ -81,11 +82,10 @@ type StreamOptions struct {
 	Metadata                  map[string]any
 }
 
-// SimpleStreamOptions adds the unified reasoning fields.
+// SimpleStreamOptions adds the unified request fields.
 type SimpleStreamOptions struct {
 	StreamOptions
 	ToolChoice      *string
-	Reasoning       *string
 	Deferred        any // bool or {window}
 	ThinkingBudgets map[string]float64
 }

@@ -65,18 +65,18 @@ var (
 	WithCancel         = chordcontext.WithCancel
 )
 
-var telemetryContextKey = chordcontext.CreateContextKey[telemetry.TelemetryContext]("pi.harness.telemetryContext")
+var telemetryContextKey = chordcontext.CreateContextKey[telemetry.TelemetrySpan]("pi.harness.telemetryContext")
 
-// GetTelemetryContext reads the harness telemetry parent context.
-func GetTelemetryContext(ctx Context) telemetry.TelemetryContext {
+// GetTelemetryContext reads the harness telemetry parent span.
+func GetTelemetryContext(ctx Context) telemetry.TelemetrySpan {
 	if v, ok := chordcontext.Value(ctx, telemetryContextKey); ok && v != nil {
 		return v
 	}
 	return telemetry.NOOP_TELEMETRY_CONTEXT
 }
 
-// WithTelemetryContext derives a context carrying a telemetry parent.
-func WithTelemetryContext(tel telemetry.TelemetryContext, parent Context) Context {
+// WithTelemetryContext derives a context carrying a telemetry parent span.
+func WithTelemetryContext(tel telemetry.TelemetrySpan, parent Context) Context {
 	return chordcontext.WithContextValue(telemetryContextKey, tel, parent)
 }
 

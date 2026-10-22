@@ -9,6 +9,8 @@ package ai
 import (
 	"fmt"
 	"sync"
+
+	"github.com/gladmo/openagent/telemetry"
 )
 
 // ProviderHeaders mirrors Record<string, string | null>.
@@ -217,15 +219,23 @@ func (m *modelsImpl) applyAuth(model *Model, options *StreamOptions) (*Model, *S
 
 func (m *modelsImpl) Stream(model *Model, context Context, options *StreamOptions) *AssistantMessageEventStream {
 	transcript := NormalizeContext(context)
+	var parent telemetry.TelemetrySpan
+	var reasoning string
+	if options != nil {
+		parent = options.Telemetry
+		if options.Reasoning != nil {
+			reasoning = *options.Reasoning
+		}
+	}
 	requestModel, requestOptions, err := m.applyAuth(model, options)
 	if err != nil {
-		return errorStream(err)
+		return observeErrorStream(model, parent, reasoning, false, err)
 	}
 	provider, err := providerForModel(m, requestModel)
 	if err != nil {
-		return errorStream(err)
+		return observeErrorStream(model, parent, reasoning, false, err)
 	}
-	return provider.Stream(requestModel, transcript, requestOptions)
+	return observeStream(requestModel, parent, reasoning, false, provider.Stream(requestModel, transcript, requestOptions))
 }
 
 func (m *modelsImpl) StreamSimple(model *Model, context Context, options *SimpleStreamOptions) *AssistantMessageEventStream {
@@ -234,20 +244,28 @@ func (m *modelsImpl) StreamSimple(model *Model, context Context, options *Simple
 	if options != nil {
 		base = &options.StreamOptions
 	}
+	var parent telemetry.TelemetrySpan
+	var reasoning string
+	if options != nil {
+		parent = options.Telemetry
+		if options.Reasoning != nil {
+			reasoning = *options.Reasoning
+		}
+	}
 	requestModel, requestOptions, err := m.applyAuth(model, base)
 	if err != nil {
-		return errorStream(err)
+		return observeErrorStream(model, parent, reasoning, false, err)
 	}
 	provider, err := providerForModel(m, requestModel)
 	if err != nil {
-		return errorStream(err)
+		return observeErrorStream(model, parent, reasoning, false, err)
 	}
 	if options == nil {
-		return provider.StreamSimple(requestModel, transcript, &SimpleStreamOptions{StreamOptions: *requestOptions})
+		return observeStream(requestModel, parent, reasoning, false, provider.StreamSimple(requestModel, transcript, &SimpleStreamOptions{StreamOptions: *requestOptions}))
 	}
 	merged := *options
 	merged.StreamOptions = *requestOptions
-	return provider.StreamSimple(requestModel, transcript, &merged)
+	return observeStream(requestModel, parent, reasoning, false, provider.StreamSimple(requestModel, transcript, &merged))
 }
 
 func (m *modelsImpl) Complete(model *Model, context Context, options *StreamOptions) (*AssistantMessage, error) {
@@ -259,15 +277,19 @@ func (m *modelsImpl) CompleteSimple(model *Model, context Context, options *Simp
 }
 
 func (m *modelsImpl) FetchDeferred(model *Model, handle *DeferredHandle, options *DeferredFetchOptions) *AssistantMessageEventStream {
+	var parent telemetry.TelemetrySpan
+	if options != nil {
+		parent = options.Telemetry
+	}
 	provider, err := providerForModel(m, model)
 	if err != nil {
-		return errorStream(err)
+		return observeErrorStream(model, parent, "", true, err)
 	}
 	capable, ok := provider.(deferredCapableProvider)
 	if !ok {
-		return errorStream(NewModelsError(ModelsErrorCodeStream, fmt.Sprintf("Provider %s does not support deferred responses", model.Provider), nil))
+		return observeErrorStream(model, parent, "", true, NewModelsError(ModelsErrorCodeStream, fmt.Sprintf("Provider %s does not support deferred responses", model.Provider), nil))
 	}
-	return capable.FetchDeferred(model, handle, options)
+	return observeStream(model, parent, "", true, capable.FetchDeferred(model, handle, options))
 }
 
 func (m *modelsImpl) CancelDeferred(model *Model, handle *DeferredHandle, options *DeferredCancelOptions) error {

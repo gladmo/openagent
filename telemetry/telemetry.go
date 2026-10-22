@@ -25,6 +25,27 @@ type AttributeValue = any
 // TS `undefined` value, which recorders skip.
 type SpanAttributes = map[string]AttributeValue
 
+// TelemetryCarrier is opaque, JSON-serializable adapter-owned propagation
+// data. A nil map mirrors an absent carrier.
+type TelemetryCarrier = map[string]string
+
+// TelemetryPropagation is the optional transport capability implemented by
+// the application's telemetry adapter.
+type TelemetryPropagation interface {
+	// Inject returns a detached carrier for a known span or extracted
+	// parent, or nil when the context is unknown to this adapter.
+	Inject(context TelemetryContext) TelemetryCarrier
+	// Extract resolves a carrier to a parent context. Absent or unknown
+	// carriers use the root; recognized identifiers are opaque strings.
+	Extract(carrier TelemetryCarrier) TelemetryContext
+}
+
+// SpanLink references another span's context with optional attributes.
+type SpanLink struct {
+	Context    TelemetryContext
+	Attributes SpanAttributes
+}
+
 // SpanError carries the name/message pair of an errored span status.
 type SpanError struct {
 	Name    string `json:"name"`
@@ -66,16 +87,24 @@ func StatusErrorWithoutDetails() SpanStatus { return SpanStatus{Status: "error"}
 type SpanOptions struct {
 	Name       string         `json:"name"`
 	Attributes SpanAttributes `json:"attributes,omitempty"`
+	Links      []SpanLink     `json:"links,omitempty"`
 }
 
 // TelemetryContext starts spans whose lifetime is the callback lifetime.
+// Adapter capabilities (Metrics, Propagation) remain available on child
+// spans and extracted parents; adapters without a capability return the
+// shared NOOP implementations (TS optional readonly members -> methods).
 type TelemetryContext interface {
 	StartSpan(options SpanOptions, callback func(span TelemetrySpan) (any, error)) (any, error)
+	Metrics() TelemetryMetrics
+	Propagation() TelemetryPropagation
 }
 
-// TelemetrySpan is a context that also records events, attributes and status.
+// TelemetrySpan is a context that also records events, attributes, links,
+// and status.
 type TelemetrySpan interface {
 	TelemetryContext
+	AddLink(link SpanLink)
 	AddEvent(name string, attributes SpanAttributes)
 	SetAttributes(attributes SpanAttributes)
 	SetStatus(status SpanStatus)
@@ -180,8 +209,9 @@ type TelemetrySpanStatusDefinition struct {
 
 // TelemetrySchemaDefinition mirrors the TS interface.
 type TelemetrySchemaDefinition struct {
-	Version int                                `json:"version"`
-	Spans   map[string]TelemetrySpanDefinition `json:"spans"`
+	Version int                                  `json:"version"`
+	Spans   map[string]TelemetrySpanDefinition   `json:"spans"`
+	Metrics map[string]TelemetryMetricDefinition `json:"metrics,omitempty"`
 }
 
 // DefineTelemetrySchema is the typed identity helper; the runtime value is

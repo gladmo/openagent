@@ -34,7 +34,7 @@ func BuildBaseOptions(model *Model, context *TranscriptContext, options *SimpleS
 	}
 	resolved := &StreamOptions{
 		Signal:                    base.Signal,
-		TelemetryContext:          base.TelemetryContext,
+		Telemetry:                 base.Telemetry,
 		APIKey:                    base.APIKey,
 		Fetch:                     base.Fetch,
 		Env:                       base.Env,

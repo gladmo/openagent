@@ -8,6 +8,7 @@ package context
 
 import (
 	"github.com/gladmo/openagent/abort"
+	"github.com/gladmo/openagent/telemetry"
 )
 
 type keyToken struct{ description string }
@@ -42,16 +43,23 @@ type Context interface {
 	Value(key ContextKeyMarker) any
 	// AbortSignal returns the context's abort signal, or nil.
 	AbortSignal() *abort.Signal
+	// Telemetry returns the context's telemetry span; NOOP when unset.
+	Telemetry() telemetry.TelemetrySpan
 	String() string
 }
 
 var abortSignalKey = CreateContextKey[*abort.Signal]("chord.abortSignal")
+
+var telemetryContextKey = CreateContextKey[telemetry.TelemetrySpan]("chord.telemetry")
 
 type emptyContext struct{ name string }
 
 func (c *emptyContext) Value(ContextKeyMarker) any { return nil }
 func (c *emptyContext) AbortSignal() *abort.Signal {
 	return nil // the shared key never exists on an empty context
+}
+func (c *emptyContext) Telemetry() telemetry.TelemetrySpan {
+	return telemetry.NOOP_TELEMETRY_CONTEXT
 }
 func (c *emptyContext) String() string { return c.name }
 
@@ -73,6 +81,13 @@ func (c *contextValue) AbortSignal() *abort.Signal {
 		return v
 	}
 	return nil
+}
+
+func (c *contextValue) Telemetry() telemetry.TelemetrySpan {
+	if span, ok := c.Value(telemetryContextKey).(telemetry.TelemetrySpan); ok {
+		return span
+	}
+	return telemetry.NOOP_TELEMETRY_CONTEXT
 }
 
 func sameKey(a, b ContextKeyMarker) bool {
@@ -124,6 +139,20 @@ func WithAbortSignal(signal *abort.Signal, ctx Context) Context {
 // the abort key masks any parent signal.
 func WithoutAbortSignal(ctx Context) Context {
 	return WithContextValue(abortSignalKey, (*abort.Signal)(nil), ctx)
+}
+
+// WithTelemetry derives an explicit telemetry parent without changing
+// cancellation or application values.
+func WithTelemetry(span telemetry.TelemetrySpan, ctx Context) Context {
+	return WithContextValue(telemetryContextKey, span, ctx)
+}
+
+// TraceIn starts a span on the context's telemetry and runs fn with the
+// span-derived context.
+func TraceIn[T any](ctx Context, options telemetry.SpanOptions, fn func(Context) (T, error)) (T, error) {
+	return telemetry.StartSpan(ctx.Telemetry(), options, func(span telemetry.TelemetrySpan) (T, error) {
+		return fn(WithTelemetry(span, ctx))
+	})
 }
 
 // CancelContext pairs a derived context with its cancel function.

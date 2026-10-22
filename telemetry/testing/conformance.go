@@ -8,17 +8,28 @@ package telemetrytesting
 
 import (
 	"errors"
+	"maps"
+	"strconv"
 	"testing"
 
 	"github.com/gladmo/openagent/telemetry"
 )
 
 // TelemetryAdapterFixture mirrors the TS interface (asyncDispose becomes
-// Dispose).
+// Dispose). Propagation, Metrics, and GetMetrics are optional capabilities;
+// nil means the adapter does not provide them.
 type TelemetryAdapterFixture interface {
 	Context() telemetry.TelemetryContext
 	GetSpans() ([]telemetry.RecordedTelemetrySpan, error)
 	Dispose() error
+}
+
+// OptionalFixtureCapabilities carries the optional fixture surfaces; cases
+// skip themselves when a capability is nil (TS `fixture.metrics ?? ...`).
+type OptionalFixtureCapabilities interface {
+	Propagation() telemetry.TelemetryPropagation // nil when unsupported
+	Metrics() telemetry.TelemetryMetrics         // nil when unsupported
+	GetMetrics() ([]telemetry.RecordedTelemetryMeasurement, error)
 }
 
 // TelemetryAdapterFixtureFactory mirrors the TS type.
@@ -40,6 +51,20 @@ func findSpan(t *testing.T, spans []telemetry.RecordedTelemetrySpan, name string
 	}
 	t.Fatalf("Expected recorded span %s", name)
 	return telemetry.RecordedTelemetrySpan{}
+}
+
+// carriersEqual compares two propagation carriers by value (TS
+// deepStrictEqual on plain objects).
+func carriersEqual(left, right telemetry.TelemetryCarrier) bool {
+	return maps.Equal(left, right)
+}
+
+// copyTestCarrier clones a carrier for a cross-adapter wire hop (TS
+// JSON.parse(JSON.stringify(carrier))).
+func copyTestCarrier(carrier telemetry.TelemetryCarrier) telemetry.TelemetryCarrier {
+	out := telemetry.TelemetryCarrier{}
+	maps.Copy(out, carrier)
+	return out
 }
 
 // CreateTelemetryAdapterConformance creates the conformance cases for a
@@ -64,6 +89,377 @@ func CreateTelemetryAdapterConformance(factory TelemetryAdapterFixtureFactory) [
 		}
 	}
 	return []TelemetryAdapterConformanceCase{
+		createCase("capabilities", "carries adapter capabilities through contexts and spans",
+			func(t *testing.T, fixture TelemetryAdapterFixture) {
+				caps, ok := fixture.(OptionalFixtureCapabilities)
+				if !ok {
+					return
+				}
+				context := fixture.Context()
+				metrics := caps.Metrics()
+				if metrics == nil {
+					metrics = context.Metrics()
+				}
+				propagation := caps.Propagation()
+				if propagation == nil {
+					propagation = context.Propagation()
+				}
+				assertCapabilities := func(ctx telemetry.TelemetryContext) {
+					if metrics != nil && ctx.Metrics() != metrics {
+						t.Fatalf("metrics capability not carried: %v", ctx.Metrics())
+					}
+					if propagation != nil && ctx.Propagation() != propagation {
+						t.Fatalf("propagation capability not carried: %v", ctx.Propagation())
+					}
+				}
+				assertCapabilities(context)
+				var settled telemetry.TelemetrySpan
+				_, err := telemetry.StartSpan(context, telemetry.SpanOptions{Name: "capabilities"}, func(span telemetry.TelemetrySpan) (any, error) {
+					settled = span
+					assertCapabilities(span)
+					_, err := telemetry.StartSpan(span, telemetry.SpanOptions{Name: "capabilities.child"}, func(child telemetry.TelemetrySpan) (any, error) {
+						assertCapabilities(child)
+						return nil, nil
+					})
+					if err != nil {
+						return nil, err
+					}
+					if propagation != nil {
+						parent := propagation.Extract(propagation.Inject(span))
+						assertCapabilities(parent)
+						_, err := telemetry.StartSpan(parent, telemetry.SpanOptions{Name: "capabilities.extracted"}, func(child telemetry.TelemetrySpan) (any, error) {
+							assertCapabilities(child)
+							return nil, nil
+						})
+						if err != nil {
+							return nil, err
+						}
+					}
+					return nil, nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if settled == nil {
+					t.Fatal("expected settled span")
+				}
+				_, err = telemetry.StartSpan(settled, telemetry.SpanOptions{Name: "capabilities.inert"}, func(inert telemetry.TelemetrySpan) (any, error) {
+					assertCapabilities(inert)
+					return nil, nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}),
+
+		createCase("metrics", "records ordered measurements and optional histogram exemplars",
+			func(t *testing.T, fixture TelemetryAdapterFixture) {
+				caps, ok := fixture.(OptionalFixtureCapabilities)
+				if !ok || caps.Metrics() == nil {
+					return
+				}
+				metrics := caps.Metrics()
+				metrics.Counter("bytes", &telemetry.InstrumentOptions{Description: "Encoded bytes", Unit: "By"}).
+					Add(12, telemetry.SpanAttributes{"direction": "out"})
+				active := metrics.UpDownCounter("active", nil)
+				active.Add(1, nil)
+				active.Add(-1, nil)
+				histogram := metrics.Histogram("duration", &telemetry.HistogramOptions{Unit: "ms", Boundaries: []float64{1, 10}})
+				_, err := telemetry.StartSpan(fixture.Context(), telemetry.SpanOptions{Name: "measured"}, func(span telemetry.TelemetrySpan) (any, error) {
+					histogram.Record(5, telemetry.SpanAttributes{"method": "read"}, span)
+					return nil, nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				measurements, err := caps.GetMetrics()
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := [][3]any{
+					{"counter", "bytes", float64(12)},
+					{"upDownCounter", "active", float64(1)},
+					{"upDownCounter", "active", float64(-1)},
+					{"histogram", "duration", float64(5)},
+				}
+				if len(measurements) != len(want) {
+					t.Fatalf("measurements = %+v", measurements)
+				}
+				for i, entry := range want {
+					if measurements[i].Kind != entry[0] || measurements[i].Name != entry[1] || measurements[i].Value != entry[2] {
+						t.Fatalf("measurement[%d] = %+v, want %v", i, measurements[i], entry)
+					}
+				}
+				if measurements[0].Attributes["direction"] != "out" {
+					t.Fatalf("attributes = %+v", measurements[0].Attributes)
+				}
+				if measurements[0].Description != "Encoded bytes" || measurements[0].Unit != "By" {
+					t.Fatalf("metadata = %+v", measurements[0])
+				}
+				if len(measurements[3].Boundaries) != 2 || measurements[3].Boundaries[0] != 1 || measurements[3].Boundaries[1] != 10 {
+					t.Fatalf("boundaries = %+v", measurements[3].Boundaries)
+				}
+				spans, err := fixture.GetSpans()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !carriersEqual(measurements[3].Context, findSpan(t, spans, "measured").Context) {
+					t.Fatalf("exemplar = %+v", measurements[3].Context)
+				}
+			}),
+
+		createCase("metrics", "copies instrument metadata and measurement attributes",
+			func(t *testing.T, fixture TelemetryAdapterFixture) {
+				caps, ok := fixture.(OptionalFixtureCapabilities)
+				if !ok || caps.Metrics() == nil {
+					return
+				}
+				boundaries := []float64{1, 10}
+				options := &telemetry.HistogramOptions{Description: "Original", Boundaries: boundaries}
+				histogram := caps.Metrics().Histogram("snapshot", options)
+				boundaries[1] = 100
+				options.Description = "Changed"
+				attributes := telemetry.SpanAttributes{"tags": []string{"original"}}
+				histogram.Record(-1, attributes, nil)
+				attributes["tags"] = []string{"changed"}
+				measurements, err := caps.GetMetrics()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(measurements) != 1 {
+					t.Fatalf("measurements = %+v", measurements)
+				}
+				tags, _ := measurements[0].Attributes["tags"].([]string)
+				if len(tags) != 1 || tags[0] != "original" {
+					t.Fatalf("attributes = %+v", measurements[0].Attributes)
+				}
+				if len(measurements[0].Boundaries) != 2 || measurements[0].Boundaries[0] != 1 || measurements[0].Boundaries[1] != 10 {
+					t.Fatalf("boundaries = %+v", measurements[0].Boundaries)
+				}
+				if measurements[0].Description != "Original" {
+					t.Fatalf("description = %q", measurements[0].Description)
+				}
+				if measurements[0].Context != nil {
+					t.Fatalf("context = %+v", measurements[0].Context)
+				}
+			}),
+
+		createCase("links", "records initial and late links without changing parents",
+			func(t *testing.T, fixture TelemetryAdapterFixture) {
+				var target telemetry.TelemetrySpan
+				_, err := telemetry.StartSpan(fixture.Context(), telemetry.SpanOptions{Name: "target"}, func(span telemetry.TelemetrySpan) (any, error) {
+					target = span
+					return nil, nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if target == nil {
+					t.Fatal("expected target span")
+				}
+				attributes := telemetry.SpanAttributes{"reason": []string{"initial"}}
+				_, err = telemetry.StartSpan(fixture.Context(), telemetry.SpanOptions{
+					Name:       "linked",
+					Attributes: nil,
+					Links:      []telemetry.SpanLink{{Context: target, Attributes: attributes}},
+				}, func(span telemetry.TelemetrySpan) (any, error) {
+					attributes["reason"] = []string{"mutated"}
+					span.AddLink(telemetry.SpanLink{Context: target, Attributes: telemetry.SpanAttributes{"reason": "late"}})
+					span.AddLink(telemetry.SpanLink{Context: telemetry.NOOP_TELEMETRY_CONTEXT})
+					return nil, nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				spans, err := fixture.GetSpans()
+				if err != nil {
+					t.Fatal(err)
+				}
+				linked := findSpan(t, spans, "linked")
+				if linked.ParentID != nil || linked.ParentContext != nil {
+					t.Fatalf("link changed parentage: %+v", linked)
+				}
+				if len(linked.Links) != 2 {
+					t.Fatalf("links = %+v", linked.Links)
+				}
+				targetSpan := findSpan(t, spans, "target")
+				if !carriersEqual(linked.Links[0].Context, targetSpan.Context) || !carriersEqual(linked.Links[1].Context, targetSpan.Context) {
+					t.Fatalf("link carriers = %+v", linked.Links)
+				}
+				if reason, _ := linked.Links[0].Attributes["reason"].([]string); len(reason) != 1 || reason[0] != "initial" {
+					t.Fatalf("initial link attributes = %+v", linked.Links[0].Attributes)
+				}
+				if linked.Links[1].Attributes["reason"] != "late" {
+					t.Fatalf("late link attributes = %+v", linked.Links[1].Attributes)
+				}
+			}),
+
+		createCase("links", "ignores links added after source settlement",
+			func(t *testing.T, fixture TelemetryAdapterFixture) {
+				var source telemetry.TelemetrySpan
+				_, err := telemetry.StartSpan(fixture.Context(), telemetry.SpanOptions{Name: "link-source"}, func(span telemetry.TelemetrySpan) (any, error) {
+					source = span
+					return nil, nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if source == nil {
+					t.Fatal("expected source span")
+				}
+				source.AddLink(telemetry.SpanLink{Context: source})
+				spans, err := fixture.GetSpans()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if links := findSpan(t, spans, "link-source").Links; len(links) != 0 {
+					t.Fatalf("links = %+v", links)
+				}
+			}),
+
+		createCase("propagation", "roundtrips parent identity through JSON without retaining the carrier",
+			func(t *testing.T, fixture TelemetryAdapterFixture) {
+				caps, ok := fixture.(OptionalFixtureCapabilities)
+				if !ok || caps.Propagation() == nil {
+					return
+				}
+				propagation := caps.Propagation()
+				_, err := telemetry.StartSpan(fixture.Context(), telemetry.SpanOptions{Name: "sender"}, func(span telemetry.TelemetrySpan) (any, error) {
+					carrier := propagation.Inject(span)
+					if carrier == nil {
+						t.Fatal("expected carrier")
+					}
+					wire := telemetry.TelemetryCarrier{}
+					for key, value := range carrier {
+						wire[key] = value
+					}
+					parent := propagation.Extract(wire)
+					for key := range wire {
+						wire[key] = "mutated"
+					}
+					_, err := telemetry.StartSpan(parent, telemetry.SpanOptions{Name: "receiver"}, func(telemetry.TelemetrySpan) (any, error) {
+						return 42, nil
+					})
+					if err != nil {
+						return nil, err
+					}
+					if reinjected := propagation.Inject(span); !carriersEqual(reinjected, carrier) {
+						t.Fatalf("carrier mutated: %+v", reinjected)
+					}
+					return nil, nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				spans, err := fixture.GetSpans()
+				if err != nil {
+					t.Fatal(err)
+				}
+				sender := findSpan(t, spans, "sender")
+				receiver := findSpan(t, spans, "receiver")
+				if !carriersEqual(receiver.ParentContext, sender.Context) {
+					t.Fatalf("parent context = %+v, want %+v", receiver.ParentContext, sender.Context)
+				}
+			}),
+
+		createCase("propagation", "absent and unknown carriers produce recorded roots",
+			func(t *testing.T, fixture TelemetryAdapterFixture) {
+				caps, ok := fixture.(OptionalFixtureCapabilities)
+				if !ok || caps.Propagation() == nil {
+					return
+				}
+				propagation := caps.Propagation()
+				if carrier := propagation.Inject(telemetry.NOOP_TELEMETRY_CONTEXT); carrier != nil {
+					t.Fatalf("NOOP inject = %+v", carrier)
+				}
+				carriers := []telemetry.TelemetryCarrier{nil, {}, {"unknown": "format"}}
+				for index, carrier := range carriers {
+					context := propagation.Extract(carrier)
+					result, err := telemetry.StartSpan(context, telemetry.SpanOptions{Name: "fallback-" + strconv.Itoa(index)}, func(telemetry.TelemetrySpan) (any, error) {
+						return 42, nil
+					})
+					if err != nil || result != 42 {
+						t.Fatalf("fallback-%d: result=%v err=%v", index, result, err)
+					}
+				}
+				spans, err := fixture.GetSpans()
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, span := range spans {
+					if span.ParentContext != nil {
+						t.Fatalf("span %s has parent %+v", span.Name, span.ParentContext)
+					}
+				}
+			}),
+
+		createCase("propagation", "propagates across fresh adapters and multiple hops",
+			func(t *testing.T, fixture TelemetryAdapterFixture) {
+				caps, ok := fixture.(OptionalFixtureCapabilities)
+				if !ok || caps.Propagation() == nil {
+					return
+				}
+				propagation := caps.Propagation()
+				newCaps := func() (TelemetryAdapterFixture, OptionalFixtureCapabilities) {
+					built, err := factory()
+					if err != nil {
+						t.Fatalf("fixture: %v", err)
+					}
+					capabilities, ok := built.(OptionalFixtureCapabilities)
+					if !ok || capabilities.Propagation() == nil {
+						t.Fatal("Expected propagation on each fixture")
+					}
+					return built, capabilities
+				}
+				receiver, receiverCaps := newCaps()
+				defer func() { _ = receiver.Dispose() }()
+				worker, workerCaps := newCaps()
+				defer func() { _ = worker.Dispose() }()
+
+				var senderCarrier telemetry.TelemetryCarrier
+				_, err := telemetry.StartSpan(fixture.Context(), telemetry.SpanOptions{Name: "sender"}, func(span telemetry.TelemetrySpan) (any, error) {
+					senderCarrier = propagation.Inject(span)
+					return nil, nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if senderCarrier == nil {
+					t.Fatal("expected sender carrier")
+				}
+				var receiverCarrier telemetry.TelemetryCarrier
+				_, err = telemetry.StartSpan(receiverCaps.Propagation().Extract(copyTestCarrier(senderCarrier)), telemetry.SpanOptions{Name: "receiver"}, func(span telemetry.TelemetrySpan) (any, error) {
+					receiverCarrier = receiverCaps.Propagation().Inject(span)
+					return nil, nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if receiverCarrier == nil {
+					t.Fatal("expected receiver carrier")
+				}
+				_, err = telemetry.StartSpan(workerCaps.Propagation().Extract(copyTestCarrier(receiverCarrier)), telemetry.SpanOptions{Name: "worker"}, func(telemetry.TelemetrySpan) (any, error) {
+					return nil, nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				receiverSpans, err := receiver.GetSpans()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if parent := findSpan(t, receiverSpans, "receiver").ParentContext; !carriersEqual(parent, senderCarrier) {
+					t.Fatalf("receiver parent = %+v, want %+v", parent, senderCarrier)
+				}
+				workerSpans, err := worker.GetSpans()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if parent := findSpan(t, workerSpans, "worker").ParentContext; !carriersEqual(parent, receiverCarrier) {
+					t.Fatalf("worker parent = %+v, want %+v", parent, receiverCarrier)
+				}
+			}),
+
 		createCase("callback lifecycle", "admits once synchronously and preserves the result",
 			func(t *testing.T, fixture TelemetryAdapterFixture) {
 				admitted := false

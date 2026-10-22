@@ -455,8 +455,7 @@ func TestAnthropicStreamSimpleThinkingBudget(t *testing.T) {
 
 	reasoning := ThinkingHigh
 	_, result := collectStream(t, AnthropicMessagesApi().StreamSimple(model, userContext("Hello"), &SimpleStreamOptions{
-		StreamOptions: StreamOptions{APIKey: &apiKey},
-		Reasoning:     &reasoning,
+		StreamOptions: StreamOptions{APIKey: &apiKey, Reasoning: &reasoning},
 	}))
 	if result.StopReason != StopStop {
 		t.Fatalf("expected stop, got %s (%v)", result.StopReason, result.ErrorMessage)
@@ -492,8 +491,7 @@ func TestAnthropicStreamSimpleAdaptiveEffort(t *testing.T) {
 
 	reasoning := ThinkingMedium
 	_, result := collectStream(t, AnthropicMessagesApi().StreamSimple(model, userContext("Hello"), &SimpleStreamOptions{
-		StreamOptions: StreamOptions{APIKey: &apiKey},
-		Reasoning:     &reasoning,
+		StreamOptions: StreamOptions{APIKey: &apiKey, Reasoning: &reasoning},
 	}))
 	if result.StopReason != StopStop {
 		t.Fatalf("expected stop, got %s (%v)", result.StopReason, result.ErrorMessage)

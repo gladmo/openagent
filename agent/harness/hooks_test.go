@@ -257,7 +257,7 @@ func TestCreateStreamOptionsPatchDiff(t *testing.T) {
 
 func TestHookSpansRecorded(t *testing.T) {
 	recorder := telemetry.NewInMemoryTelemetryContext()
-	ctx := WithTelemetryContext(recorder, BackgroundContext)
+	ctx := withRecorderSpan(t, recorder, BackgroundContext)
 	var errors []string
 	registry := hookRegistryWithErrors(&errors)
 	registry.On(HookBeforeTool, func(*jsonx.Obj, Context) (*jsonx.Obj, error) {
@@ -267,17 +267,22 @@ func TestHookSpansRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	spans := recorder.GetSpans()
-	if len(spans) != 1 || spans[0].Name != HarnessSpanHook {
-		t.Fatalf("spans = %+v", spans)
+	var span *telemetry.RecordedTelemetrySpan
+	for i := range recorder.GetSpans() {
+		if recorder.GetSpans()[i].Name == HarnessSpanHook {
+			span = &recorder.GetSpans()[i]
+		}
 	}
-	if outcome, _ := spans[0].Attributes["pi.hook.outcome"]; outcome != "blocked" {
-		t.Fatalf("outcome = %v", spans[0].Attributes["pi.hook.outcome"])
+	if span == nil {
+		t.Fatalf("spans = %+v", recorder.GetSpans())
 	}
-	if name, _ := spans[0].Attributes["pi.hook.name"]; name != HookBeforeTool {
+	if outcome, _ := span.Attributes["pi.hook.outcome"]; outcome != "blocked" {
+		t.Fatalf("outcome = %v", span.Attributes["pi.hook.outcome"])
+	}
+	if name, _ := span.Attributes["pi.hook.name"]; name != HookBeforeTool {
 		t.Fatalf("hook name = %v", name)
 	}
-	if lane, _ := spans[0].Attributes["pi.lane.name"]; lane != "main" {
+	if lane, _ := span.Attributes["pi.lane.name"]; lane != "main" {
 		t.Fatalf("lane = %v", lane)
 	}
 }

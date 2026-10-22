@@ -55,15 +55,15 @@ func createRequestOptions(
 	options := config.StreamOptions
 	simple := ai.SimpleStreamOptions{
 		StreamOptions: ai.StreamOptions{
-			Transport:        options.Transport,
-			TimeoutMs:        options.TimeoutMs,
-			MaxRetries:       options.MaxRetries,
-			MaxRetryDelayMs:  options.MaxRetryDelayMs,
-			Headers:          headerMapToProviderHeaders(options.Headers),
-			Metadata:         options.Metadata,
-			CacheRetention:   options.CacheRetention,
-			Signal:           ctx.AbortSignal(),
-			TelemetryContext: GetTelemetryContext(ctx),
+			Transport:       options.Transport,
+			TimeoutMs:       options.TimeoutMs,
+			MaxRetries:      options.MaxRetries,
+			MaxRetryDelayMs: options.MaxRetryDelayMs,
+			Headers:         headerMapToProviderHeaders(options.Headers),
+			Metadata:        options.Metadata,
+			CacheRetention:  options.CacheRetention,
+			Signal:          ctx.AbortSignal(),
+			Telemetry:       GetTelemetryContext(ctx),
 		},
 		Deferred: options.Deferred,
 	}

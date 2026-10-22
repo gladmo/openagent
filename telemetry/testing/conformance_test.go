@@ -16,6 +16,14 @@ func (f *inMemoryFixture) GetSpans() ([]telemetry.RecordedTelemetrySpan, error) 
 }
 func (f *inMemoryFixture) Dispose() error { return nil }
 
+// OptionalFixtureCapabilities: the in-memory adapter provides both
+// capabilities plus the normalized measurement reader.
+func (f *inMemoryFixture) Propagation() telemetry.TelemetryPropagation { return f.context }
+func (f *inMemoryFixture) Metrics() telemetry.TelemetryMetrics         { return f.context }
+func (f *inMemoryFixture) GetMetrics() ([]telemetry.RecordedTelemetryMeasurement, error) {
+	return f.context.GetMetrics(), nil
+}
+
 // Port of conformance.test.ts: run every case against InMemoryTelemetryContext.
 func TestInMemoryConformance(t *testing.T) {
 	conformance := CreateTelemetryAdapterConformance(func() (TelemetryAdapterFixture, error) {
