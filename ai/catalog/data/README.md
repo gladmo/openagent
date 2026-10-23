@@ -1,6 +1,6 @@
 # Generated model catalog snapshot
 
-Snapshot of `pi/packages/ai` `src/providers/data/` produced by `node scripts/generate-models.ts` (non-strict) at pi commit `ff72faba2`, generatedAt `2026-09-28T03:09:18.703Z` (see `.manifest.json`).
+Snapshot of `pi/packages/ai` `src/providers/data/` produced by `node scripts/generate-models.ts` (non-strict) at pi commit `bd3c9b823`, generatedAt `2026-10-23T19:11:20.382Z` (see `.manifest.json`).
 
 Shape: `<provider>.json` = `{ [api]: { ["chat"|"image"|"classifier":<modelId>]: Model } }`. `.manifest.json` carries schemaVersion/generatedAt/structureHash/files (sha256).
 
