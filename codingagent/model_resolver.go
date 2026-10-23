@@ -31,14 +31,14 @@ var DefaultModelPerProvider = map[string]string{
 	"ant-ling":                   "Ring-2.6-1T",
 	"anthropic":                  "claude-opus-4-8",
 	"openai":                     "gpt-5.5",
-	"azure-openai-responses":     "gpt-5.4",
-	"openai-codex":               "gpt-5.5",
+	"azure":                      "gpt-5.4",
+	"openai-codex":               "gpt-6.1-sol",
 	"radius":                     "balanced",
-	"nvidia":                     "nvidia/nemotron-3-super-120b-a12b",
+	"nvidia":                     "nvidia/nemotron-3.5-super-vl-120b-a12b",
 	"deepseek":                   "deepseek-v4-pro",
 	"google":                     "gemini-3.1-pro-preview",
 	"google-vertex":              "gemini-3.1-pro-preview",
-	"github-copilot":             "gpt-5.4",
+	"github-copilot":             "gpt-6.1-sol",
 	"openrouter":                 "moonshotai/kimi-k2.6",
 	"vercel-ai-gateway":          "zai/glm-5.1",
 	"xai":                        "grok-4.7",
@@ -52,11 +52,11 @@ var DefaultModelPerProvider = map[string]string{
 	"moonshotai":                 "kimi-k2.6",
 	"moonshotai-cn":              "kimi-k2.6",
 	"huggingface":                "moonshotai/Kimi-K2.6",
-	"fireworks":                  "accounts/fireworks/models/kimi-k2p6",
-	"together":                   "moonshotai/Kimi-K2.6",
+	"fireworks":                  "accounts/fireworks/models/kimi-k3",
+	"together":                   "moonshotai/Kimi-K3",
 	"baseten":                    "zai-org/GLM-5.2",
 	"opencode":                   "kimi-k2.6",
-	"opencode-go":                "kimi-k2.6",
+	"opencode-go":                "kimi-k3",
 	"kimi-coding":                "kimi-for-coding",
 	"meta":                       "muse-spark-1.3",
 	"cloudflare-workers-ai":      "@cf/moonshotai/kimi-k2.6",
@@ -64,10 +64,10 @@ var DefaultModelPerProvider = map[string]string{
 	"qwen-token-plan":            "qwen3.7-max",
 	"qwen-token-plan-cn":         "qwen3.7-max",
 	"qwen-token-plan-individual": "qwen3.8-max",
-	"xiaomi":                     "mimo-v2.5-pro",
-	"xiaomi-token-plan-cn":       "mimo-v2.5-pro",
-	"xiaomi-token-plan-ams":      "mimo-v2.5-pro",
-	"xiaomi-token-plan-sgp":      "mimo-v2.5-pro",
+	"xiaomi":                     "mimo-v2.6-pro",
+	"xiaomi-token-plan-cn":       "mimo-v2.6-pro",
+	"xiaomi-token-plan-ams":      "mimo-v2.6-pro",
+	"xiaomi-token-plan-sgp":      "mimo-v2.6-pro",
 }
 
 // ScopedModel pairs a model with an explicit thinking level.
@@ -400,179 +400,100 @@ func ResolveCliModel(options ResolveCliModelOptions) ResolveCliModelResult {
 		return ResolveCliModelResult{}
 	}
 
-	// Use *all* models here, not just models with pre-configured auth
-	// (--api-key can be used for first-time setup).
-	availableModels := modelRuntime.GetModels()
-	if len(availableModels) == 0 {
+	// Use *all* models here, not just models with pre-configured auth:
+	// --api-key can be used for first-time setup.
+	models := modelRuntime.GetModels()
+	if len(models) == 0 {
 		return ResolveCliModelResult{Error: "No models available. Check your installation or add models to models.json."}
-	}
-
-	// Canonical provider lookup (case-insensitive).
-	providerMap := map[string]string{}
-	for _, model := range availableModels {
-		providerMap[strings.ToLower(model.Provider)] = model.Provider
 	}
 
 	provider := ""
 	if cliProvider != "" {
-		canonical, ok := providerMap[strings.ToLower(cliProvider)]
-		if !ok {
+		for _, model := range models {
+			if strings.EqualFold(model.Provider, cliProvider) {
+				provider = model.Provider
+				break
+			}
+		}
+		if provider == "" {
 			return ResolveCliModelResult{Error: fmt.Sprintf("Unknown provider %q. Use --list-models to see available providers/models.", cliProvider)}
 		}
-		provider = canonical
 	}
 
-	// Without an explicit --provider, try "provider/model" inference first;
-	// a prefix matching a known provider wins over literal slash-containing
-	// model ids.
-	pattern := cliModel
-	inferredProvider := false
-	if provider == "" {
-		if slashIndex := strings.Index(cliModel, "/"); slashIndex != -1 {
-			if canonical, ok := providerMap[strings.ToLower(cliModel[:slashIndex])]; ok {
-				provider = canonical
-				pattern = cliModel[slashIndex+1:]
-				inferredProvider = true
-			}
+	usable := func(providerID string) bool { return modelRuntime.HasConfiguredAuth(providerID) }
+	result := ResolveModelReference(ModelReferenceRequest{
+		Text:           cliModel,
+		Provider:       provider,
+		ThinkingSuffix: ThinkingSuffixStrict,
+		Fuzzy:          true,
+	}, models, usable)
+	if result.Status == "resolved" {
+		return ResolveCliModelResult{Model: result.Model, ThinkingLevel: result.ThinkingLevel, Warning: result.Warning}
+	}
+	if result.Status == "ambiguous" {
+		matches := make([]string, 0, len(result.Candidates))
+		for _, model := range result.Candidates {
+			matches = append(matches, model.Provider+"/"+model.ID)
 		}
+		sort.Strings(matches)
+		authHint := "No matching provider is authenticated."
+		if result.UsableCount > 0 {
+			authHint = "More than one matching provider is authenticated."
+		}
+		return ResolveCliModelResult{Error: fmt.Sprintf(
+			"Model %q is ambiguous across providers: %s. %s Use --provider or provider/model",
+			cliModel, strings.Join(matches, ", "), authHint,
+		)}
 	}
 
-	// Without provider inference, try exact matches without provider
-	// preference; a sole authenticated match resolves bare-id ambiguity.
-	if provider == "" {
-		lower := strings.ToLower(cliModel)
-		var exactMatches []*ai.Model
-		for _, model := range availableModels {
-			if strings.ToLower(model.ID) == lower ||
-				strings.ToLower(model.Provider+"/"+model.ID) == lower {
-				exactMatches = append(exactMatches, model)
-			}
-		}
-		if len(exactMatches) == 1 {
-			return ResolveCliModelResult{Model: exactMatches[0]}
-		}
-		if len(exactMatches) > 1 {
-			var authenticated []*ai.Model
-			for _, model := range exactMatches {
-				if modelRuntime.HasConfiguredAuth(model.Provider) {
-					authenticated = append(authenticated, model)
-				}
-			}
-			if len(authenticated) == 1 {
-				return ResolveCliModelResult{Model: authenticated[0]}
-			}
-			matches := make([]string, 0, len(exactMatches))
-			for _, model := range exactMatches {
-				matches = append(matches, model.Provider+"/"+model.ID)
-			}
-			sort.Strings(matches)
-			authHint := "No matching provider is authenticated."
-			if len(authenticated) > 1 {
-				authHint = "More than one matching provider is authenticated."
-			}
-			return ResolveCliModelResult{Error: fmt.Sprintf(
-				"Model %q is ambiguous across providers: %s. %s Use --provider or provider/model",
-				cliModel, strings.Join(matches, ", "), authHint,
-			)}
-		}
+	if !result.HasTarget {
+		return ResolveCliModelResult{Error: fmt.Sprintf("Model %q not found. Use --list-models to see available models.", cliModel)}
 	}
+	target := result.Target
+	// The thinking suffix applies only without an explicit --thinking;
+	// otherwise it stays part of the custom model id.
+	modelID := target.ModelID
+	fallbackThinking := ""
+	if cliThinking != "" {
+		modelID = target.ModelText
+	} else if target.HasThinking {
+		fallbackThinking = target.ThinkingLevel
+	}
+	fallbackModel := buildFallbackModelFromList(target.ProviderModels, modelID)
+	if fallbackModel == nil {
+		return ResolveCliModelResult{Error: fmt.Sprintf("Model %q not found. Use --list-models to see available models.", cliModel)}
+	}
+	requestedThinking := cliThinking
+	if requestedThinking == "" {
+		requestedThinking = fallbackThinking
+	}
+	if requestedThinking != "" && requestedThinking != agent.ThinkingOff {
+		fallbackModel.Reasoning = true
+	}
+	return ResolveCliModelResult{
+		Model:         fallbackModel,
+		ThinkingLevel: fallbackThinking,
+		Warning:       fmt.Sprintf("Model %q not found for provider %q. Using custom model ID.", modelID, target.Provider),
+	}
+}
 
-	// Both flags given: tolerate --model <provider>/<pattern> by stripping
-	// the provider prefix.
-	if cliProvider != "" && provider != "" {
-		prefix := provider + "/"
-		if len(cliModel) >= len(prefix) && strings.EqualFold(cliModel[:len(prefix)], prefix) {
-			pattern = cliModel[len(prefix):]
-		}
+// buildFallbackModelFromList clones the provider's default (or first) model
+// under a custom id.
+func buildFallbackModelFromList(providerModels []*ai.Model, modelID string) *ai.Model {
+	if len(providerModels) == 0 {
+		return nil
 	}
-
-	candidates := availableModels
-	if provider != "" {
-		candidates = nil
-		for _, model := range availableModels {
-			if model.Provider == provider {
-				candidates = append(candidates, model)
+	baseModel := providerModels[0]
+	if defaultID, ok := DefaultModelPerProvider[providerModels[0].Provider]; ok {
+		for _, model := range providerModels {
+			if model.ID == defaultID {
+				baseModel = model
+				break
 			}
 		}
 	}
-	noFallback := false
-	parsed := ParseModelPattern(pattern, candidates, &ParseModelOptions{AllowInvalidThinkingLevelFallback: &noFallback})
-
-	if parsed.Model != nil {
-		// Provider inference that matched an unauthenticated pair prefers
-		// a sole exact raw model-id match that IS authenticated, keeping
-		// "provider/model" syntax preferred only when usable.
-		if inferredProvider {
-			var rawExactMatches []*ai.Model
-			for _, model := range availableModels {
-				if strings.EqualFold(model.ID, cliModel) && !ai.ModelsAreEqual(model, parsed.Model) {
-					rawExactMatches = append(rawExactMatches, model)
-				}
-			}
-			if len(rawExactMatches) > 0 && !modelRuntime.HasConfiguredAuth(parsed.Model.Provider) {
-				var authenticated []*ai.Model
-				for _, model := range rawExactMatches {
-					if modelRuntime.HasConfiguredAuth(model.Provider) {
-						authenticated = append(authenticated, model)
-					}
-				}
-				if len(authenticated) == 1 {
-					return ResolveCliModelResult{Model: authenticated[0]}
-				}
-			}
-		}
-		return ResolveCliModelResult{Model: parsed.Model, ThinkingLevel: parsed.ThinkingLevel, Warning: parsed.Warning}
-	}
-
-	// A provider inferred from the slash that matched nothing within that
-	// provider falls back to the full input as a raw model id.
-	if inferredProvider {
-		lower := strings.ToLower(cliModel)
-		for _, model := range availableModels {
-			if strings.ToLower(model.ID) == lower ||
-				strings.ToLower(model.Provider+"/"+model.ID) == lower {
-				return ResolveCliModelResult{Model: model}
-			}
-		}
-		fallback := ParseModelPattern(cliModel, availableModels, &ParseModelOptions{AllowInvalidThinkingLevelFallback: &noFallback})
-		if fallback.Model != nil {
-			return ResolveCliModelResult{Model: fallback.Model, ThinkingLevel: fallback.ThinkingLevel, Warning: fallback.Warning}
-		}
-	}
-
-	if provider != "" {
-		// Parse a thinking suffix off the pattern before building the
-		// fallback model, but only without an explicit --thinking.
-		fallbackPattern := pattern
-		fallbackThinking := ""
-		if cliThinking == "" {
-			if lastColon := strings.LastIndex(pattern, ":"); lastColon != -1 {
-				suffix := pattern[lastColon+1:]
-				if isValidThinkingLevel(suffix) {
-					fallbackPattern = pattern[:lastColon]
-					fallbackThinking = suffix
-				}
-			}
-		}
-		if fallbackModel := buildFallbackModel(provider, fallbackPattern, availableModels); fallbackModel != nil {
-			requestedThinking := cliThinking
-			if requestedThinking == "" {
-				requestedThinking = fallbackThinking
-			}
-			if requestedThinking != "" && requestedThinking != agent.ThinkingOff {
-				fallbackModel.Reasoning = true
-			}
-			fallbackWarning := fmt.Sprintf("Model %q not found for provider %q. Using custom model ID.", fallbackPattern, provider)
-			if parsed.Warning != "" {
-				fallbackWarning = parsed.Warning + " " + fallbackWarning
-			}
-			return ResolveCliModelResult{Model: fallbackModel, ThinkingLevel: fallbackThinking, Warning: fallbackWarning}
-		}
-	}
-
-	display := cliModel
-	if provider != "" {
-		display = provider + "/" + pattern
-	}
-	return ResolveCliModelResult{Error: fmt.Sprintf("Model %q not found. Use --list-models to see available models.", display)}
+	fallback := *baseModel
+	fallback.ID = modelID
+	fallback.Name = modelID
+	return &fallback
 }
