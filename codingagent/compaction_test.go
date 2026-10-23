@@ -101,7 +101,8 @@ func TestSerializeConversation(t *testing.T) {
 		t.Fatalf("tool = %q", serialized)
 	}
 
-	// Thinking blocks and tool calls render.
+	// Tool calls render; thinking blocks are omitted from summaries
+	// (#10893).
 	assistant := &ai.AssistantMessage{
 		Content: []ai.ContentBlock{
 			ai.ThinkingContent{Thinking: "pondering"},
@@ -110,8 +111,8 @@ func TestSerializeConversation(t *testing.T) {
 		},
 	}
 	serialized = SerializeConversation([]ai.Message{assistant})
-	if !strings.Contains(serialized, "[Assistant thinking]: pondering") {
-		t.Fatalf("thinking = %q", serialized)
+	if strings.Contains(serialized, "pondering") {
+		t.Fatalf("thinking leaked: %q", serialized)
 	}
 	if !strings.Contains(serialized, "[Assistant tool calls]: read(path=") {
 		t.Fatalf("tool call = %q", serialized)

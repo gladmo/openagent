@@ -129,10 +129,10 @@ type SummarizationOptions struct {
 }
 
 // CreateSummarizationOptions builds the simple-stream options (reasoning
-// only for models that support it and a non-off level).
-func CreateSummarizationOptions(model *ai.Model, maxTokens int, apiKey string, headers, env map[string]string, signal context.Context, thinkingLevel, sessionID string) *SummarizationOptions {
+// only for models that support it and a non-off level). Summary requests
+// carry no maxTokens cap: the model's own output limit applies (#9512).
+func CreateSummarizationOptions(model *ai.Model, apiKey string, headers, env map[string]string, signal context.Context, thinkingLevel, sessionID string) *SummarizationOptions {
 	options := &SummarizationOptions{
-		MaxTokens: maxTokens,
 		ApiKey:    apiKey,
 		Headers:   headers,
 		Env:       env,
@@ -225,7 +225,7 @@ func BuildSummarizationContext(promptText string) []ai.Message {
 
 // GenerateSummaryOptions configure one summary generation.
 type GenerateSummaryOptions struct {
-	// ReserveTokens bounds the summary budget (maxTokens = min(0.8 *
+	// ReserveTokens thresholds when compaction runs; it no longer caps
 	// reserve, model max)).
 	ReserveTokens      int
 	ApiKey             string
@@ -244,11 +244,6 @@ type GenerateSummaryOptions struct {
 func GenerateSummary(currentMessages []agent.AgentMessage, model *ai.Model, options *GenerateSummaryOptions, streamFn SummarizationStreamFn) (*SummaryResult, error) {
 	if options == nil {
 		options = &GenerateSummaryOptions{}
-	}
-
-	maxTokens := int(float64(options.ReserveTokens) * 0.8)
-	if model != nil && model.MaxTokens > 0 && model.MaxTokens < float64(maxTokens) {
-		maxTokens = int(model.MaxTokens)
 	}
 
 	basePrompt := SummarizationPrompt
@@ -270,7 +265,7 @@ func GenerateSummary(currentMessages []agent.AgentMessage, model *ai.Model, opti
 	promptText += basePrompt
 
 	completionOptions := CreateSummarizationOptions(
-		model, maxTokens, options.ApiKey, options.Headers, options.Env,
+		model, options.ApiKey, options.Headers, options.Env,
 		options.Signal, options.ThinkingLevel, options.SessionID,
 	)
 
@@ -355,19 +350,13 @@ func GenerateBranchSummary(entries []SessionEntry, model *ai.Model, options *Gen
 	}
 	promptText := "<conversation>\n" + conversationText + "\n</conversation>\n\n" + instructions
 
-	maxTokens := 4096
-	if model != nil && model.MaxTokens > 0 && model.MaxTokens < float64(maxTokens) {
-		maxTokens = int(model.MaxTokens)
-	}
-
 	response, err := CompleteSummarization(options.Signal, model,
 		BuildSummarizationContext(promptText),
 		&SummarizationOptions{
-			MaxTokens: maxTokens,
-			ApiKey:    options.ApiKey,
-			Headers:   options.Headers,
-			Env:       options.Env,
-			Signal:    options.Signal,
+			ApiKey:  options.ApiKey,
+			Headers: options.Headers,
+			Env:     options.Env,
+			Signal:  options.Signal,
 		}, streamFn, options.Retry)
 	if err != nil {
 		return &BranchSummaryResult{Error: err.Error()}
@@ -479,21 +468,23 @@ type CompactionOutcome struct {
 
 // GenerateTurnPrefixSummary summarizes the head of a split turn under a
 // smaller budget (0.5 * reserve) with the turn-prefix checkpoint format.
+// GenerateTurnPrefixSummary summarizes the split turn's prefix; the
+// reserveTokens parameter is unused (summaries use the model's output
+// limit, #9512) but kept for caller parity.
 func GenerateTurnPrefixSummary(messages []agent.AgentMessage, model *ai.Model, reserveTokens int, options *GenerateSummaryOptions, streamFn SummarizationStreamFn) (*SummaryResult, error) {
 	if options == nil {
 		options = &GenerateSummaryOptions{}
 	}
-	maxTokens := int(float64(reserveTokens) * 0.5)
-	if model != nil && model.MaxTokens > 0 && model.MaxTokens < float64(maxTokens) {
-		maxTokens = int(model.MaxTokens)
-	}
 
 	conversationText := SerializeConversation(ConvertToLlm(messages))
 	promptText := "# Conversation\n" + conversationText + "\n\n# Instructions\n" + TurnPrefixSummarizationPromptText
+	if options.CustomInstructions != "" {
+		promptText += "\n\nAdditional focus: " + options.CustomInstructions
+	}
 
 	response, err := CompleteSummarization(options.Signal, model,
 		BuildSummarizationContext(promptText),
-		CreateSummarizationOptions(model, maxTokens, options.ApiKey, options.Headers, options.Env, options.Signal, options.ThinkingLevel, options.SessionID),
+		CreateSummarizationOptions(model, options.ApiKey, options.Headers, options.Env, options.Signal, options.ThinkingLevel, options.SessionID),
 		streamFn, options.Retry)
 	if err != nil {
 		return nil, err

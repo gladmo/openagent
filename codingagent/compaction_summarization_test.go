@@ -71,8 +71,8 @@ func TestCreateSummarizationOptions(t *testing.T) {
 	plain := &ai.Model{Provider: "p", ID: "m"}
 
 	// Reasoning model + level passes through.
-	options := CreateSummarizationOptions(reasoning, 4096, "key", nil, nil, nil, "high", "sess")
-	if options.MaxTokens != 4096 || options.ApiKey != "key" || options.SessionID != "sess" {
+	options := CreateSummarizationOptions(reasoning, "key", nil, nil, nil, "high", "sess")
+	if options.MaxTokens != 0 || options.ApiKey != "key" || options.SessionID != "sess" {
 		t.Fatalf("options = %+v", options)
 	}
 	if options.ThinkingLevel != "high" {
@@ -80,15 +80,15 @@ func TestCreateSummarizationOptions(t *testing.T) {
 	}
 
 	// "off" and empty levels do not set reasoning.
-	if got := CreateSummarizationOptions(reasoning, 1, "", nil, nil, nil, "off", "").ThinkingLevel; got != "" {
+	if got := CreateSummarizationOptions(reasoning, "", nil, nil, nil, "off", "").ThinkingLevel; got != "" {
 		t.Fatalf("off = %q", got)
 	}
-	if got := CreateSummarizationOptions(reasoning, 1, "", nil, nil, nil, "", "").ThinkingLevel; got != "" {
+	if got := CreateSummarizationOptions(reasoning, "", nil, nil, nil, "", "").ThinkingLevel; got != "" {
 		t.Fatalf("empty = %q", got)
 	}
 
 	// Non-reasoning models ignore the level.
-	if got := CreateSummarizationOptions(plain, 1, "", nil, nil, nil, "high", "").ThinkingLevel; got != "" {
+	if got := CreateSummarizationOptions(plain, "", nil, nil, nil, "high", "").ThinkingLevel; got != "" {
 		t.Fatalf("plain = %q", got)
 	}
 }
@@ -227,8 +227,8 @@ func TestGenerateSummaryInitial(t *testing.T) {
 	if result.Usage.Input != 10 || result.Usage.Output != 5 {
 		t.Fatalf("usage = %+v", result.Usage)
 	}
-	// maxTokens = min(0.8*reserve, model max) = 800.
-	if maxTokensSeen != 800 {
+	// Summary requests carry no maxTokens cap (#9512).
+	if maxTokensSeen != 0 {
 		t.Fatalf("max tokens = %d", maxTokensSeen)
 	}
 	// Initial prompt: no previous-summary tag.
@@ -280,11 +280,11 @@ func TestGenerateSummaryModelTokenCap(t *testing.T) {
 		maxTokensSeen = options.MaxTokens
 		return &ai.AssistantMessage{StopReason: "stop"}, nil
 	}
-	// Reserve 100000 -> 80000, but the model caps at 4096.
+	// The model's output limit applies server-side; no request cap (#9512).
 	if _, err := GenerateSummary(nil, &ai.Model{MaxTokens: 4096}, &GenerateSummaryOptions{ReserveTokens: 100000}, streamFn); err != nil {
 		t.Fatalf("err = %v", err)
 	}
-	if maxTokensSeen != 4096 {
+	if maxTokensSeen != 0 {
 		t.Fatalf("max tokens = %d", maxTokensSeen)
 	}
 }
@@ -499,8 +499,8 @@ func TestGenerateTurnPrefixSummary(t *testing.T) {
 	if result.Usage.Input != 7 {
 		t.Fatalf("usage = %+v", result.Usage)
 	}
-	// Budget is half the reserve.
-	if maxTokensSeen != 5000 {
+	// No request cap (#9512).
+	if maxTokensSeen != 0 {
 		t.Fatalf("max tokens = %d", maxTokensSeen)
 	}
 	if !strings.Contains(promptSeen, "# Conversation") || !strings.Contains(promptSeen, "# Instructions") {
@@ -863,5 +863,28 @@ func TestEstimateProjectedContextTokensNilProjection(t *testing.T) {
 	estimate := EstimateProjectedContextTokens(nil, nil)
 	if estimate.Tokens != 0 || estimate.LastUsageIndex != -1 {
 		t.Fatalf("estimate = %+v", estimate)
+	}
+}
+
+// Port of adfc14461: /compact instructions reach the split-turn prefix
+// summary prompt.
+func TestTurnPrefixSummaryCarriesCustomInstructions(t *testing.T) {
+	var promptSeen string
+	streamFn := func(ctx context.Context, model *ai.Model, messages []ai.Message, options *SummarizationOptions) (*ai.AssistantMessage, error) {
+		for _, message := range messages {
+			if user, ok := message.(*ai.UserMessage); ok {
+				promptSeen += user.Content.Text + "\n"
+			}
+		}
+		return &ai.AssistantMessage{StopReason: "stop", Content: []ai.ContentBlock{&ai.TextContent{Text: "ok"}}}, nil
+	}
+	_, err := GenerateTurnPrefixSummary([]agent.AgentMessage{
+		&ai.UserMessage{Content: ai.StringContent("do it")},
+	}, &ai.Model{}, 1000, &GenerateSummaryOptions{CustomInstructions: "Focus on API changes"}, streamFn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(promptSeen, "Additional focus: Focus on API changes") {
+		t.Fatalf("prompt = %q", promptSeen)
 	}
 }

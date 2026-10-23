@@ -136,13 +136,16 @@ func SerializeConversation(messages []ai.Message) string {
 				parts = append(parts, "[User]: "+content)
 			}
 		case *ai.AssistantMessage:
-			var thinkingParts []string
+			// Thinking is omitted: providers return summaries of the real
+			// reasoning, and replayed thinking is often not part of the
+			// model's live context (a block that does not match its request
+			// is dropped). Including it can make the summarization request
+			// larger than the context it summarizes. Visible text, tool
+			// calls, and tool results record what happened (#10893).
 			var toolCalls []string
 			hasText := false
 			for _, block := range typed.Content {
 				switch blockTyped := block.(type) {
-				case ai.ThinkingContent:
-					thinkingParts = append(thinkingParts, blockTyped.Thinking)
 				case *ai.ToolCall:
 					var argParts []string
 					if blockTyped.Arguments != nil {
@@ -159,9 +162,6 @@ func SerializeConversation(messages []ai.Message) string {
 				}
 			}
 
-			if len(thinkingParts) > 0 {
-				parts = append(parts, "[Assistant thinking]: "+strings.Join(thinkingParts, "\n"))
-			}
 			if hasText {
 				parts = append(parts, "[Assistant]: "+ai.ContentText(ai.Content{Blocks: typed.Content}, ""))
 			}
