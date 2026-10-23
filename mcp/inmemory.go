@@ -37,7 +37,7 @@ func (t *InMemoryTransport) Start() error {
 }
 
 // Send implements McpTransport.
-func (t *InMemoryTransport) Send(message *JsonRpcMessage) error {
+func (t *InMemoryTransport) Send(message *JsonRpcMessage, _ *McpTransportSendOptions) error {
 	t.mu.Lock()
 	started, closed, peer := t.started, t.closed, t.peer
 	t.mu.Unlock()

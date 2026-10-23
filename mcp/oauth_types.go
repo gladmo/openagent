@@ -67,6 +67,10 @@ type OAuthClientMetadata struct {
 	SoftwareID              string // "" when absent
 	SoftwareVersion         string // "" when absent
 	SoftwareStatement       string // "" when absent
+	// ApplicationType is the OpenID Connect client type, "native" or "web".
+	// Dynamic client registration derives it from RedirectURIs when absent
+	// (MCP SEP-837).
+	ApplicationType string // "" when absent
 }
 
 // ToObj renders the metadata for a registration request body.
@@ -117,6 +121,9 @@ func (m *OAuthClientMetadata) ToObj() *jsonx.Obj {
 	}
 	if m.SoftwareStatement != "" {
 		obj.Set("software_statement", m.SoftwareStatement)
+	}
+	if m.ApplicationType != "" {
+		obj.Set("application_type", m.ApplicationType)
 	}
 	return obj
 }

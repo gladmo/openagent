@@ -46,7 +46,7 @@ func (s *testServer) respond(request *JsonRpcMessage) {
 	s.mu.Unlock()
 	if handler == nil {
 		_ = s.transport.Send(NewErrorResponse(request.ID(), JSON_RPC_ERROR_CODES.MethodNotFound,
-			"Method not found: "+request.Method(), nil))
+			"Method not found: "+request.Method(), nil), nil)
 		return
 	}
 	result, err := handler(request)
@@ -55,13 +55,13 @@ func (s *testServer) respond(request *JsonRpcMessage) {
 		if !ok {
 			mcpError = NewMcpError(JSON_RPC_ERROR_CODES.InternalError, err.Error(), nil)
 		}
-		_ = s.transport.Send(NewErrorResponse(request.ID(), mcpError.Code, mcpError.Message, mcpError.Data))
+		_ = s.transport.Send(NewErrorResponse(request.ID(), mcpError.Code, mcpError.Message, mcpError.Data), nil)
 		return
 	}
 	if result == nil {
 		result = jsonx.NewObj()
 	}
-	_ = s.transport.Send(NewSuccessResponse(request.ID(), result))
+	_ = s.transport.Send(NewSuccessResponse(request.ID(), result), nil)
 }
 
 func createTestServer(t *testing.T) (*InMemoryTransport, *testServer) {
@@ -279,8 +279,12 @@ func TestClientReturnsStructuredContentAndErrors(t *testing.T) {
 	if len(result.Content) != 1 || result.Content[0].(TextContent).Text != "ok" {
 		t.Fatalf("content = %+v", result.Content)
 	}
-	if count, _ := result.StructuredContent.MustGet("count").(float64); count != 3 {
-		t.Fatalf("structured = %v", result.StructuredContent.MustGet("count"))
+	structured, isObj := result.StructuredContent.(*jsonx.Obj)
+	if !isObj {
+		t.Fatalf("structured = %v", result.StructuredContent)
+	}
+	if count, _ := structured.MustGet("count").(float64); count != 3 {
+		t.Fatalf("structured count = %v", structured.MustGet("count"))
 	}
 	_, err = client.CallTool("fail", nil, McpRequestOptions{})
 	mcpError, ok := err.(*McpError)
@@ -305,7 +309,7 @@ func TestClientRenewsTimeoutOnProgress(t *testing.T) {
 				"progressToken", token.Value(),
 				"progress", float64(1),
 				"total", float64(2),
-			)))
+			)), nil)
 		}()
 		time.Sleep(120 * time.Millisecond)
 		return jsonx.ObjFrom("content", []any{jsonx.ObjFrom("type", "text", "text", "done")}), nil
@@ -470,7 +474,8 @@ func TestClientDefaultsMissingContentToEmptyList(t *testing.T) {
 		return mustParse(t, `{ "structuredContent": { "ok": true } }`), nil
 	})
 	result, err := client.CallTool("structured", nil, McpRequestOptions{})
-	if err != nil || len(result.Content) != 0 || result.StructuredContent.MustGet("ok") != true {
+	structured, isObj := result.StructuredContent.(*jsonx.Obj)
+	if err != nil || len(result.Content) != 0 || !isObj || structured.MustGet("ok") != true {
 		t.Fatalf("result = %+v %v", result, err)
 	}
 	server.setHandler("tools/call", func(*JsonRpcMessage) (any, error) {
@@ -562,10 +567,10 @@ func TestClientAnswersRootsAndDispatchesNotifications(t *testing.T) {
 	defer client.Close()
 	changed := make(chan any, 4)
 	client.OnNotification("notifications/tools/list_changed", func(params any) { changed <- params })
-	if err := server.transport.Send(NewRequest(NewStringID("roots"), "roots/list", nil)); err != nil {
+	if err := server.transport.Send(NewRequest(NewStringID("roots"), "roots/list", nil), nil); err != nil {
 		t.Fatalf("send roots/list: %v", err)
 	}
-	if err := server.transport.Send(NewNotification("notifications/tools/list_changed", nil)); err != nil {
+	if err := server.transport.Send(NewNotification("notifications/tools/list_changed", nil), nil); err != nil {
 		t.Fatalf("send notification: %v", err)
 	}
 	select {

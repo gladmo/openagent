@@ -169,7 +169,7 @@ func (t *StdioTransport) isClosed() bool {
 }
 
 // Send implements McpTransport.
-func (t *StdioTransport) Send(message *JsonRpcMessage) error {
+func (t *StdioTransport) Send(message *JsonRpcMessage, _ *McpTransportSendOptions) error {
 	t.mu.Lock()
 	started, closed := t.started, t.closed
 	stdin := t.stdin

@@ -62,7 +62,7 @@ func mcpFakeTransport(options mcpFakeServerOptions) mcp.McpTransport {
 				"content", []any{jsonx.ObjFrom("type", "text", "text", "ok")},
 			))
 		}
-		go func() { _ = server.Send(response) }()
+		go func() { _ = server.Send(response, nil) }()
 	})
 	if err := server.Start(); err != nil {
 		panic(err)
@@ -94,12 +94,12 @@ func (t *expiringTransport) SetProtocolVersion(version string) {
 	t.inner.SetProtocolVersion(version)
 }
 func (t *expiringTransport) Close() error { return t.inner.Close() }
-func (t *expiringTransport) Send(message *mcp.JsonRpcMessage) error {
+func (t *expiringTransport) Send(message *mcp.JsonRpcMessage, options *mcp.McpTransportSendOptions) error {
 	if message.Kind == mcp.KindRequest && message.Method() == "tools/call" && !t.expired {
 		t.expired = true
 		return mcp.NewMcpSessionExpiredError("gone")
 	}
-	return t.inner.Send(message)
+	return t.inner.Send(message, options)
 }
 
 func mcpTestEntry(t *testing.T, raw string) McpServerEntry {
@@ -224,7 +224,7 @@ func TestMcpConnectionRetriesTransientHTTPErrors(t *testing.T) {
 type failingTransport struct{}
 
 func (failingTransport) Start() error { return nil }
-func (failingTransport) Send(*mcp.JsonRpcMessage) error {
+func (failingTransport) Send(*mcp.JsonRpcMessage, *mcp.McpTransportSendOptions) error {
 	return mcp.NewMcpHttpError(503, "overloaded", "")
 }
 func (failingTransport) Close() error                                     { return nil }

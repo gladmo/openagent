@@ -249,8 +249,10 @@ func (EmbeddedResourceContent) contentType() string { return "resource" }
 
 // CallToolResult is a tools/call answer.
 type CallToolResult struct {
-	Content           []ContentBlock
-	StructuredContent *jsonx.Obj
+	Content []ContentBlock
+	// StructuredContent may be any JSON value, including arrays and nil
+	// (MCP 2026-07-28; earlier revisions allowed only objects).
+	StructuredContent any
 	IsError           bool
 	Meta              *jsonx.Obj
 }
@@ -656,7 +658,9 @@ func ParseCallToolResult(value any) (*CallToolResult, error) {
 			result.Content = append(result.Content, ParseContentBlock(item))
 		}
 	}
-	result.StructuredContent, _ = obj.MustGet("structuredContent").(*jsonx.Obj)
+	if raw, has := obj.Get("structuredContent"); has {
+		result.StructuredContent = raw
+	}
 	result.IsError, _ = obj.MustGet("isError").(bool)
 	result.Meta, _ = obj.MustGet("_meta").(*jsonx.Obj)
 	return result, nil

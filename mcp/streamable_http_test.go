@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/gladmo/openagent/jsonx"
+
+	"github.com/gladmo/openagent/abort"
 )
 
 func TestConsumeSseStreamParsesChunkedEvents(t *testing.T) {
@@ -420,5 +422,66 @@ func TestStreamableHttpGETStreamDeclined(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if client.ConnectionState() != ClientConnected {
 		t.Fatalf("state = %s", client.ConnectionState())
+	}
+}
+
+// Port of the cancelled-send rule (da0eadf04): a request whose sender gave
+// up during the authorization recovery must not be retried afterwards.
+func TestStreamableHttpDoesNotRetryCancelledSendAfterRefresh(t *testing.T) {
+	server := &fakeHTTPServer{}
+	posts := 0
+	var sendController *abort.Controller
+	server.setAnswer("POST", func(request *FetchRequest) (*FetchResponse, error) {
+		message, err := ParseJsonRpcText(request.Body)
+		if err != nil {
+			return nil, err
+		}
+		if message.Kind != KindRequest {
+			return jsonResponse(202, "", nil), nil
+		}
+		switch message.Method() {
+		case "initialize":
+			return initializeAnswer(message.ID(), ""), nil
+		case "boom":
+			posts++
+			if posts == 1 {
+				return jsonResponse(401, `{"error":"unauthorized"}`, nil), nil
+			}
+			return jsonResponse(200, jsonx.Stringify(jsonx.ObjFrom(
+				"jsonrpc", "2.0",
+				"id", message.ID().Value(),
+				"result", jsonx.NewObj(),
+			)), map[string]string{"content-type": "application/json"}), nil
+		}
+		return jsonResponse(404, "no", nil), nil
+	})
+	transport, err := NewStreamableHttpTransport(StreamableHttpTransportOptions{
+		URL:   "https://example.test/mcp",
+		Fetch: server.fetch,
+		AuthProvider: &AuthProvider{
+			Token: func() (string, bool) { return "token", true },
+			OnUnauthorized: func(*UnauthorizedContext) error {
+				// The sender gives up while the recovery runs.
+				sendController.Abort()
+				return nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("transport: %v", err)
+	}
+	client := NewMcpClient(McpClientOptions{Name: "http-test", Version: "1.0.0"})
+	if _, err := client.Connect(transport); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	sendController = abort.NewController()
+	err = transport.Send(NewRequest(NewStringID("b1"), "boom", nil), &McpTransportSendOptions{Signal: sendController.Signal()})
+	if _, isAbort := err.(*McpAbortError); !isAbort {
+		t.Fatalf("err = %v", err)
+	}
+	if posts != 1 {
+		t.Fatalf("dispatched %d times after cancellation", posts)
 	}
 }

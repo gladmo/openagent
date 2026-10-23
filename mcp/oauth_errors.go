@@ -26,7 +26,10 @@ func NewOAuthError(code, message, errorURI string) *OAuthError {
 // OAuthIssuerMismatchError reports an issuer mismatch between the
 // authorization server and an authorization response (RFC 9207).
 type OAuthIssuerMismatchError struct {
-	Expected string
+	// Expected is the discovered issuer; hasExpected is false when no
+	// authorization server metadata was discovered.
+	Expected    string
+	hasExpected bool
 	// Received is empty when an authorization response lacks the iss
 	// parameter its server promised.
 	Received    string
@@ -34,17 +37,22 @@ type OAuthIssuerMismatchError struct {
 }
 
 func (e *OAuthIssuerMismatchError) Error() string {
+	expected := "none"
+	if e.hasExpected {
+		expected = quoteJSON(e.Expected)
+	}
 	received := "none"
 	if e.hasReceived {
 		received = quoteJSON(e.Received)
 	}
-	return fmt.Sprintf("OAuth issuer mismatch: expected %s, received %s", quoteJSON(e.Expected), received)
+	return fmt.Sprintf("OAuth issuer mismatch: expected %s, received %s", expected, received)
 }
 
-// NewOAuthIssuerMismatchError builds the error; received absent when
+// NewOAuthIssuerMismatchError builds the error; expected absent when no
+// authorization server metadata was discovered, received absent when
 // hasReceived is false.
-func NewOAuthIssuerMismatchError(expected string, received string, hasReceived bool) *OAuthIssuerMismatchError {
-	return &OAuthIssuerMismatchError{Expected: expected, Received: received, hasReceived: hasReceived}
+func NewOAuthIssuerMismatchError(expected string, hasExpected bool, received string, hasReceived bool) *OAuthIssuerMismatchError {
+	return &OAuthIssuerMismatchError{Expected: expected, hasExpected: hasExpected, Received: received, hasReceived: hasReceived}
 }
 
 // OAuthInsecureEndpointError refuses to send credentials over plain HTTP.

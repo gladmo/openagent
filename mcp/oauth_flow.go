@@ -16,6 +16,8 @@ import (
 	"sync"
 
 	"github.com/gladmo/openagent/jsonx"
+
+	"github.com/gladmo/openagent/abort"
 )
 
 // AddClientAuthentication injects client credentials into a token request.
@@ -77,7 +79,10 @@ type OAuthFlowOptions struct {
 	// on loopback.
 	AuthorizationServerMetadataURL string
 	Fetch                          McpFetch
-	SkipIssuerValidation           bool
+	// Signal aborts every request of the flow. Requests have no time
+	// limit of their own; combine with a timeout as needed.
+	Signal               *abort.Signal
+	SkipIssuerValidation bool
 	// SkipRefresh goes straight to the authorization redirect instead of
 	// refreshing stored tokens, for example when the server asks for
 	// scopes the current grant lacks (a refresh keeps the old scope).
@@ -99,6 +104,7 @@ type TokenRequestOptions struct {
 	Resource                string
 	AddClientAuthentication AddClientAuthentication
 	Fetch                   McpFetch
+	Signal                  *abort.Signal
 }
 
 func loopbackHost(hostname string) bool {
@@ -328,6 +334,7 @@ func tokenRequest(authorizationServerURL string, options TokenRequestOptions, pa
 		URL:     target,
 		Headers: headers,
 		Body:    params.Encode(),
+		Signal:  options.Signal,
 	})
 	if err != nil {
 		return nil, err
@@ -362,7 +369,7 @@ func tokenRequest(authorizationServerURL string, options TokenRequestOptions, pa
 }
 
 // RegisterClient performs dynamic client registration.
-func RegisterClient(authorizationServerURL string, metadata *AuthorizationServerMetadata, clientMetadata *OAuthClientMetadata, scope string, fetch McpFetch) (*OAuthClientInformation, error) {
+func RegisterClient(authorizationServerURL string, metadata *AuthorizationServerMetadata, clientMetadata *OAuthClientMetadata, scope string, fetch McpFetch, signal *abort.Signal) (*OAuthClientInformation, error) {
 	endpoint := ""
 	if metadata != nil && metadata.RegistrationEndpoint != "" {
 		endpoint = metadata.RegistrationEndpoint
@@ -376,6 +383,13 @@ func RegisterClient(authorizationServerURL string, metadata *AuthorizationServer
 		endpoint = base.Scheme + "://" + base.Host + "/register"
 	}
 	payload := clientMetadata.ToObj()
+	// The OpenID Connect application_type for redirect_uris (MCP SEP-837).
+	// Without one, OpenID Connect servers assume "web", which rejects http
+	// loopback redirect URIs. Loopback hosts and custom schemes are native
+	// (RFC 8252).
+	if !payload.Has("application_type") {
+		payload.Set("application_type", deriveApplicationType(clientMetadata.RedirectURIs))
+	}
 	if scope != "" {
 		payload.Set("scope", scope)
 	}
@@ -387,6 +401,7 @@ func RegisterClient(authorizationServerURL string, metadata *AuthorizationServer
 		URL:     endpoint,
 		Headers: [][2]string{{"Accept", "application/json"}, {"content-type", "application/json"}},
 		Body:    jsonx.Stringify(payload),
+		Signal:  signal,
 	})
 	if err != nil {
 		return nil, err
@@ -493,6 +508,7 @@ func runFlow(provider *OAuthClientProvider, options OAuthFlowOptions) (OAuthFlow
 				metadata, err := DiscoverAuthorizationServerMetadata(discovered.AuthorizationServerURL, DiscoveryOptions{
 					Fetch:                options.Fetch,
 					SkipIssuerValidation: options.SkipIssuerValidation,
+					Signal:               options.Signal,
 				})
 				if err != nil {
 					return "", err
@@ -505,6 +521,7 @@ func runFlow(provider *OAuthClientProvider, options OAuthFlowOptions) (OAuthFlow
 		info, err := DiscoverOAuthServerInfo(options.ServerURL, OAuthServerInfoOptions{
 			ResourceMetadataURL:            options.ResourceMetadataURL,
 			AuthorizationServerMetadataURL: metadataURL,
+			Signal:                         options.Signal,
 			Fetch:                          options.Fetch,
 			SkipIssuerValidation:           options.SkipIssuerValidation,
 		})
@@ -567,7 +584,7 @@ func runFlow(provider *OAuthClientProvider, options OAuthFlowOptions) (OAuthFlow
 		if provider.SaveClientInformation == nil {
 			return "", errors.New("OAuth client information cannot be persisted")
 		}
-		if client, err = RegisterClient(discovered.AuthorizationServerURL, metadata, provider.ClientMetadata, scope, options.Fetch); err != nil {
+		if client, err = RegisterClient(discovered.AuthorizationServerURL, metadata, provider.ClientMetadata, scope, options.Fetch, options.Signal); err != nil {
 			return "", err
 		}
 		if err = provider.SaveClientInformation(client); err != nil {
@@ -586,13 +603,20 @@ func runFlow(provider *OAuthClientProvider, options OAuthFlowOptions) (OAuthFlow
 		Resource:                resource,
 		AddClientAuthentication: provider.AddClientAuthentication,
 		Fetch:                   options.Fetch,
+		Signal:                  options.Signal,
 	}
 	if options.AuthorizationCode != "" {
 		// RFC 9207: never send a code from another authorization server to
-		// this one.
-		if metadata != nil && (options.HasIss || boolValue(metadata.AuthorizationResponseIssParameterSupported)) {
-			if options.Iss != metadata.Issuer {
-				return "", NewOAuthIssuerMismatchError(metadata.Issuer, options.Iss, options.HasIss)
+		// this one. Without metadata there is no issuer to compare with, so
+		// any iss is rejected.
+		if options.HasIss || (metadata != nil && boolValue(metadata.AuthorizationResponseIssParameterSupported)) {
+			expected := ""
+			hasExpected := false
+			if metadata != nil {
+				expected, hasExpected = metadata.Issuer, true
+			}
+			if !hasExpected || options.Iss != expected {
+				return "", NewOAuthIssuerMismatchError(expected, hasExpected, options.Iss, options.HasIss)
 			}
 		}
 		verifier, err := provider.CodeVerifier()
@@ -628,6 +652,9 @@ func runFlow(provider *OAuthClientProvider, options OAuthFlowOptions) (OAuthFlow
 				return "", err
 			}
 			return FlowAuthorized, nil
+		}
+		if options.Signal != nil && options.Signal.Aborted() {
+			return "", refreshErr
 		}
 		var insecure *OAuthInsecureEndpointError
 		if errors.As(refreshErr, &insecure) {
@@ -789,4 +816,19 @@ func runUnauthorizedRefresh(provider *OAuthClientProvider, context *Unauthorized
 		return &McpOAuthAuthorizationRequiredError{}
 	}
 	return nil
+}
+
+// deriveApplicationType classifies redirect URIs: native when any URI uses a
+// non-http(s) scheme or a loopback host, else web.
+func deriveApplicationType(redirectURIs []string) string {
+	for _, uri := range redirectURIs {
+		parsed, err := parseLooseURL(uri)
+		if err != nil {
+			continue
+		}
+		if (parsed.Scheme != "http" && parsed.Scheme != "https") || loopbackHost(parsed.Hostname()) {
+			return "native"
+		}
+	}
+	return "web"
 }

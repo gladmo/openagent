@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/gladmo/openagent/abort"
 )
 
 var errInvalidURL = errors.New("invalid URL")
@@ -37,6 +39,7 @@ type DiscoveryOptions struct {
 	Fetch                McpFetch
 	ProtocolVersion      string
 	SkipIssuerValidation bool
+	Signal               *abort.Signal
 }
 
 // isDiscoveryMiss: 4xx and 502 mean "not here", so discovery tries the
@@ -96,7 +99,7 @@ func ParseWwwAuthenticate(header string) OAuthChallenge {
 	return challenge
 }
 
-func fetchMetadata(target string, fetch McpFetch, protocolVersion string) (*FetchResponse, error) {
+func fetchMetadata(target string, fetch McpFetch, protocolVersion string, signal *abort.Signal) (*FetchResponse, error) {
 	if fetch == nil {
 		fetch = DefaultMcpFetch
 	}
@@ -107,6 +110,7 @@ func fetchMetadata(target string, fetch McpFetch, protocolVersion string) (*Fetc
 		Method:  "GET",
 		URL:     target,
 		Headers: [][2]string{{"Accept", "application/json"}, {"MCP-Protocol-Version", protocolVersion}},
+		Signal:  signal,
 	})
 }
 
@@ -133,13 +137,13 @@ func DiscoverProtectedResourceMetadata(serverURL string, options DiscoveryOption
 	} else {
 		target = origin + "/.well-known/oauth-protected-resource" + pathSuffix(server.Path)
 	}
-	response, err := fetchMetadata(target, fetch, version)
+	response, err := fetchMetadata(target, fetch, version, options.Signal)
 	if err != nil {
 		return nil, err
 	}
 	if options.ResourceMetadataURL == "" && server.Path != "/" && isDiscoveryMiss(response.Status) {
 		response.Discard()
-		response, err = fetchMetadata(origin+"/.well-known/oauth-protected-resource", fetch, version)
+		response, err = fetchMetadata(origin+"/.well-known/oauth-protected-resource", fetch, version, options.Signal)
 		if err != nil {
 			return nil, err
 		}
@@ -196,7 +200,7 @@ func DiscoverAuthorizationServerMetadata(authorizationServerURL string, options 
 		version = LATEST_PROTOCOL_VERSION
 	}
 	for _, candidate := range BuildAuthorizationServerDiscoveryUrls(authorizationServerURL) {
-		response, err := fetchMetadata(candidate.URL, fetch, version)
+		response, err := fetchMetadata(candidate.URL, fetch, version, options.Signal)
 		if err != nil {
 			return nil, err
 		}
@@ -220,7 +224,7 @@ func DiscoverAuthorizationServerMetadata(authorizationServerURL string, options 
 			// URL parsing adds a trailing slash to bare origins, so compare
 			// without one on either side.
 			if trimTrailingSlash(metadata.Issuer) != trimTrailingSlash(expected) {
-				return nil, NewOAuthIssuerMismatchError(expected, metadata.Issuer, true)
+				return nil, NewOAuthIssuerMismatchError(expected, true, metadata.Issuer, true)
 			}
 		}
 		return metadata, nil
@@ -241,6 +245,7 @@ type OAuthServerInfoOptions struct {
 	AuthorizationServerMetadataURL string
 	Fetch                          McpFetch
 	SkipIssuerValidation           bool
+	Signal                         *abort.Signal
 }
 
 // DiscoverOAuthServerInfo resolves the authorization server for an MCP
@@ -251,13 +256,14 @@ func DiscoverOAuthServerInfo(serverURL string, options OAuthServerInfoOptions) (
 	if metadata, err := DiscoverProtectedResourceMetadata(serverURL, DiscoveryOptions{
 		ResourceMetadataURL: options.ResourceMetadataURL,
 		Fetch:               options.Fetch,
+		Signal:              options.Signal,
 	}); err == nil {
 		resourceMetadata = metadata
 	} else if isNetworkError(err) {
 		return nil, err
 	}
 	if options.AuthorizationServerMetadataURL != "" {
-		response, err := fetchMetadata(options.AuthorizationServerMetadataURL, options.Fetch, LATEST_PROTOCOL_VERSION)
+		response, err := fetchMetadata(options.AuthorizationServerMetadataURL, options.Fetch, LATEST_PROTOCOL_VERSION, options.Signal)
 		if err != nil {
 			return nil, err
 		}

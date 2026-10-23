@@ -496,3 +496,59 @@ func TestBuildAuthorizationServerDiscoveryUrls(t *testing.T) {
 		t.Fatalf("urls = %+v", urls)
 	}
 }
+
+// Port of the iss rejection without discovered metadata (#11206): any iss
+// is rejected before the code exchange.
+func TestOAuthIssRejectedWithoutMetadata(t *testing.T) {
+	server := &oauthTestServer{origin: "https://auth.test"}
+	// Suppress authorization-server discovery so the flow runs without
+	// metadata.
+	noMetadataFetch := func(request *FetchRequest) (*FetchResponse, error) {
+		if strings.HasSuffix(request.URL, "/.well-known/oauth-authorization-server") {
+			return jsonResponse(404, "{}", map[string]string{"content-type": "application/json"}), nil
+		}
+		return server.fetch(request)
+	}
+	provider := newTestOAuthProvider("http://127.0.0.1/callback")
+	if _, err := AuthorizeMcp(provider.asProvider(), OAuthFlowOptions{
+		ServerURL: "https://auth.test/mcp",
+		Fetch:     noMetadataFetch,
+	}); err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	_, err := AuthorizeMcp(provider.asProvider(), OAuthFlowOptions{
+		ServerURL:         "https://auth.test/mcp",
+		AuthorizationCode: "code-1",
+		HasIss:            true,
+		Iss:               "https://evil.example",
+		Fetch:             noMetadataFetch,
+	})
+	mismatch, ok := err.(*OAuthIssuerMismatchError)
+	if !ok {
+		t.Fatalf("err = %v", err)
+	}
+	if mismatch.hasExpected {
+		t.Fatalf("expected none, got %q", mismatch.Expected)
+	}
+	if !strings.Contains(mismatch.Error(), "expected none") {
+		t.Fatalf("message = %q", mismatch.Error())
+	}
+	if server.tokenGrants != 0 {
+		t.Fatalf("code exchange ran %d times", server.tokenGrants)
+	}
+}
+
+func TestDeriveApplicationType(t *testing.T) {
+	if deriveApplicationType([]string{"http://127.0.0.1:8080/callback"}) != "native" {
+		t.Fatal("loopback should be native")
+	}
+	if deriveApplicationType([]string{"myapp://oauth/callback"}) != "native" {
+		t.Fatal("custom scheme should be native")
+	}
+	if deriveApplicationType([]string{"https://example.com/callback"}) != "web" {
+		t.Fatal("https should be web")
+	}
+	if deriveApplicationType([]string{"not a url", "https://example.com/callback"}) != "web" {
+		t.Fatal("unparseable URIs are ignored")
+	}
+}

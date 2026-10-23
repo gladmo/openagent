@@ -8,10 +8,21 @@ import (
 	"sync"
 
 	"github.com/gladmo/openagent/jsonx"
+
+	"github.com/gladmo/openagent/abort"
 )
 
 // DefaultMaxMessageBytes bounds one decoded message.
 const DefaultMaxMessageBytes = 16 * 1024 * 1024
+
+// McpTransportSendOptions carries the per-send abort signal: aborted once
+// the sender no longer waits for a reply (the request was cancelled, timed
+// out, answered, or the client closed). A transport must not dispatch the
+// message after that, for example when retrying it after an authorization
+// refresh. It does not undo a message already dispatched.
+type McpTransportSendOptions struct {
+	Signal *abort.Signal
+}
 
 // McpTransportMessageListener receives decoded messages.
 type McpTransportMessageListener func(message *JsonRpcMessage)
@@ -27,7 +38,7 @@ type McpTransport interface {
 	// Start prepares the transport; it fails when already started.
 	Start() error
 	// Send delivers one message.
-	Send(message *JsonRpcMessage) error
+	Send(message *JsonRpcMessage, options *McpTransportSendOptions) error
 	// Close releases the transport; it is a no-op when already closed.
 	Close() error
 	// OnMessage registers a listener and returns its disposer.

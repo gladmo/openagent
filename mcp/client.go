@@ -79,13 +79,16 @@ type pendingRequest struct {
 	done chan pendingResult
 	mu   sync.Mutex
 	// timeoutMs, timer are guarded by mu.
-	timeoutMs     int
-	timer         *time.Timer
-	signal        *abort.Signal
-	removeAbort   func()
-	cancellable   bool
-	onProgress    func(ProgressNotification)
-	progressToken *JsonRpcID
+	timeoutMs int
+	timer     *time.Timer
+	signal    *abort.Signal
+	// sendController is aborted when the request settles, so the transport
+	// does not dispatch (or retry) it afterwards.
+	sendController *abort.Controller
+	removeAbort    func()
+	cancellable    bool
+	onProgress     func(ProgressNotification)
+	progressToken  *JsonRpcID
 }
 
 type pendingResult struct {
@@ -742,7 +745,11 @@ func (c *McpClient) requestInternal(method string, params *jsonx.Obj, options Mc
 		}
 	}
 	c.armTimeout(id, entry)
-	if sendErr := transport.Send(message); sendErr != nil {
+	if entry.sendController == nil {
+		entry.sendController = abort.NewController()
+	}
+	sendErr := transport.Send(message, &McpTransportSendOptions{Signal: entry.sendController.Signal()})
+	if sendErr != nil {
 		c.cancelPending(id, sendErr, false, "")
 	}
 	result := <-entry.done
@@ -775,7 +782,7 @@ func (c *McpClient) notifyInternal(method string, params *jsonx.Obj, allowConnec
 	if err != nil {
 		return err
 	}
-	return transport.Send(NewNotification(method, params))
+	return transport.Send(NewNotification(method, params), nil)
 }
 
 func (c *McpClient) requireTransport(allowConnecting bool) (McpTransport, error) {
@@ -829,7 +836,7 @@ func (c *McpClient) handleRequest(message *JsonRpcMessage) {
 	}
 	if entry == nil {
 		if err := transport.Send(NewErrorResponse(message.ID(), JSON_RPC_ERROR_CODES.MethodNotFound,
-			"Method not found: "+message.Method(), nil)); err != nil {
+			"Method not found: "+message.Method(), nil), nil); err != nil {
 			c.EmitError(err)
 		}
 		return
@@ -853,7 +860,7 @@ func (c *McpClient) handleRequest(message *JsonRpcMessage) {
 		if errors.As(err, &mcpErr) {
 			responseCode, responseData = mcpErr.Code, mcpErr.Data
 		}
-		if sendErr := transport.Send(NewErrorResponse(id, responseCode, responseMessage, responseData)); sendErr != nil {
+		if sendErr := transport.Send(NewErrorResponse(id, responseCode, responseMessage, responseData), nil); sendErr != nil {
 			c.EmitError(sendErr)
 		}
 		return
@@ -861,7 +868,7 @@ func (c *McpClient) handleRequest(message *JsonRpcMessage) {
 	if result == nil {
 		result = jsonx.NewObj()
 	}
-	if sendErr := transport.Send(NewSuccessResponse(id, result)); sendErr != nil {
+	if sendErr := transport.Send(NewSuccessResponse(id, result), nil); sendErr != nil {
 		c.EmitError(sendErr)
 	}
 }
@@ -969,7 +976,7 @@ func (c *McpClient) cancelPending(id JsonRpcID, err error, notifyServer bool, re
 		if reason != "" {
 			params.Set("reason", reason)
 		}
-		if sendErr := transport.Send(NewNotification("notifications/cancelled", params)); sendErr != nil {
+		if sendErr := transport.Send(NewNotification("notifications/cancelled", params), nil); sendErr != nil {
 			c.EmitError(sendErr)
 		}
 	}
@@ -981,7 +988,11 @@ func (c *McpClient) teardownPending(id JsonRpcID, entry *pendingRequest) {
 		entry.timer.Stop()
 		entry.timer = nil
 	}
+	sendController := entry.sendController
 	entry.mu.Unlock()
+	if sendController != nil {
+		sendController.Abort()
+	}
 	if entry.removeAbort != nil {
 		entry.removeAbort()
 	}

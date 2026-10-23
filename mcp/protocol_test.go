@@ -64,7 +64,7 @@ func TestToLlmContentFallsBackToStructured(t *testing.T) {
 
 func TestParseCallToolResultDefaultsContent(t *testing.T) {
 	result := blocksFrom(t, `{ "structuredContent": { "ok": true } }`)
-	if len(result.Content) != 0 || result.StructuredContent.MustGet("ok") != true {
+	if len(result.Content) != 0 || result.StructuredContent.(*jsonx.Obj).MustGet("ok") != true {
 		t.Fatalf("result = %+v", result)
 	}
 	if _, err := ParseCallToolResult(mustParse(t, `{ "content": "not a list" }`)); err == nil ||
