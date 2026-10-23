@@ -689,3 +689,32 @@ func TestMarkdownUnclosedDisplayMathBeforeTables(t *testing.T) {
 		t.Fatal("table falsely detected")
 	}
 }
+
+// Port of the CJK emphasis block (b2d0da6fe / #10730): emphasis delimited
+// next to CJK punctuation renders, ASCII punctuation keeps CommonMark
+// flanking.
+func TestMarkdownCjkEmphasis(t *testing.T) {
+	// The renderer measures styled output by visible columns, so theme
+	// functions must not change the visible width; assert on the default
+	// SGR markers instead of a tag theme.
+	render := func(text string) string {
+		markdown := NewMarkdown(text, 0, 0, defaultMarkdownTheme, nil, nil)
+		lines := markdown.Render(80)
+		return strings.TrimRight(strings.Join(lines, ""), " ")
+	}
+	bold := func(text string) string { return "\x1b[1m" + text + "\x1b[22m" }
+	italic := func(text string) string { return "\x1b[3m" + text + "\x1b[23m" }
+	cases := []struct{ in, want string }{
+		{"**这是测试。**后面", bold("这是测试。") + "后面"},
+		{"**一句话说清：**一台机器", bold("一句话说清：") + "一台机器"},
+		{"**要点到此为止。**20 小时", bold("要点到此为止。") + "20 小时"},
+		{"字**「引用」**字", "字" + bold("「引用」") + "字"},
+		{"*斜体。*后面", italic("斜体。") + "后面"},
+		{"**end.**Then next", "**end.**Then next"},
+	}
+	for _, tc := range cases {
+		if got := render(tc.in); got != tc.want {
+			t.Fatalf("render(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

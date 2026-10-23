@@ -6,6 +6,7 @@ package tui
 import (
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -137,6 +138,13 @@ func mdLexInline(src string) []MdToken {
 			tokens = append(tokens, MdStrong{Tokens: mdLexInline(content)})
 			rest = rest[width:]
 			continue
+		} else if literal, width := mdLiteralRejectedStrong(rest); width > 0 {
+			// A ** run that failed flanking renders literally (marked
+			// consumes the whole delimiter run, so em cannot re-match a
+			// subset of it).
+			tokens = append(tokens, MdText{Text: literal})
+			rest = rest[width:]
+			continue
 		}
 
 		// Emphasis *text* / _text_.
@@ -244,9 +252,9 @@ func mdMatchStrong(src string) (string, int, bool) {
 		if !strings.HasPrefix(src, marker) {
 			continue
 		}
-		content, width, ok := mdMatchDelimited(src, marker)
+		content, _, ok := mdMatchDelimited(src, marker)
 		if ok {
-			return content, width, true
+			return content, len(marker) + len(content) + len(marker), true
 		}
 	}
 	return "", 0, false
@@ -257,9 +265,9 @@ func mdMatchEm(src string) (string, int, bool) {
 		if !strings.HasPrefix(src, marker) {
 			continue
 		}
-		content, width, ok := mdMatchDelimited(src, marker)
+		content, _, ok := mdMatchDelimited(src, marker)
 		if ok {
-			return content, width, true
+			return content, len(marker) + len(content) + len(marker), true
 		}
 	}
 	return "", 0, false
@@ -322,6 +330,16 @@ func mdMatchDelimited(src, marker string) (string, int, bool) {
 							return "", 0, false
 						}
 					}
+					// CJK-friendly flanking (#10730): a closer preceded by
+					// non-CJK punctuation and followed by a word rune is
+					// intraword and stays literal, while CJK punctuation
+					// counts like whitespace and stays a valid closer.
+					if i+mLen < len(runes) && mdIsWordRune(runes[i+mLen]) && len(content) > 0 {
+						before := content[len(content)-1]
+						if mdIsPunctRune(before) && !CjkPunctuationRune(before) {
+							return "", 0, false
+						}
+					}
 					nextIdx := i + mLen
 					_ = nextIdx
 					return string(content), i + mLen, true
@@ -339,6 +357,14 @@ func mdMatchDelimited(src, marker string) (string, int, bool) {
 
 func mdIsWordRune(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+}
+
+// mdIsPunctRune reports ASCII/CommonMark punctuation.
+func mdIsPunctRune(r rune) bool {
+	if r < 127 {
+		return strings.ContainsRune("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", r)
+	}
+	return unicode.IsPunct(r)
 }
 
 func mdLinkTokens(href, text string) MdToken {
@@ -518,4 +544,29 @@ func mdMatchLink(src string) (linkText, href string, width int, ok bool) {
 		width++
 	}
 	return linkText, href, width, true
+}
+
+// mdLiteralRejectedStrong reports a **...** run whose closer failed
+// flanking: marked keeps the entire run literal instead of letting em
+// rematch a subset of the delimiters.
+func mdLiteralRejectedStrong(src string) (string, int) {
+	if !strings.HasPrefix(src, "**") {
+		return "", 0
+	}
+	closing := strings.Index(src[2:], "**")
+	if closing < 0 {
+		return "", 0
+	}
+	content := src[2 : 2+closing]
+	after := src[2+closing+2:]
+	if len(content) == 0 || len(after) == 0 {
+		return "", 0
+	}
+	before := []rune(content)
+	last := before[len(before)-1]
+	if !mdIsWordRune([]rune(after)[0]) || !mdIsPunctRune(last) || CjkPunctuationRune(last) {
+		return "", 0
+	}
+	width := 2 + closing + 2
+	return src[:width], width
 }
