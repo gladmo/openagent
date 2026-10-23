@@ -219,6 +219,9 @@ func LoadSourcedPromptTemplates[TSource any](
 func ParseCommandArgs(argsString string) []string {
 	args := []string{}
 	current := ""
+	// hasToken tracks whether a token has started, so quoted empty strings
+	// ("" or '') are kept as arguments.
+	hasToken := false
 	inQuote := byte(0)
 	for i := 0; i < len(argsString); i++ {
 		ch := argsString[i]
@@ -227,19 +230,23 @@ func ParseCommandArgs(argsString string) []string {
 				inQuote = 0
 			} else {
 				current += string(ch)
+				hasToken = true
 			}
 		} else if ch == '"' || ch == '\'' {
 			inQuote = ch
+			hasToken = true
 		} else if ch == ' ' || ch == '\t' {
-			if current != "" {
+			if hasToken {
 				args = append(args, current)
 				current = ""
+				hasToken = false
 			}
 		} else {
 			current += string(ch)
+			hasToken = true
 		}
 	}
-	if current != "" {
+	if hasToken {
 		args = append(args, current)
 	}
 	return args

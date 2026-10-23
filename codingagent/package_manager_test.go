@@ -416,3 +416,18 @@ func TestPackageManagerResolveParentGitignoreDoesNotGatePiDiscovery(t *testing.T
 		t.Fatalf("auto-discovered skill = %+v", entry)
 	}
 }
+
+// Port of 6a51a39d4: resource setting patterns expand ~.
+func TestResourcePatternsExpandTilde(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home dir")
+	}
+	normalized := normalizeExactPattern("~/skills/**")
+	if !strings.HasPrefix(normalized, filepath.ToSlash(home)+"/") {
+		t.Fatalf("normalized = %q", normalized)
+	}
+	if normalizeExactPattern("./relative") != "relative" {
+		t.Fatal("relative prefix kept")
+	}
+}

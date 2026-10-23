@@ -640,3 +640,89 @@ func (r *McpServerRegistry) SetChangeListener(listener func()) {
 	defer r.mu.Unlock()
 	r.changeListener = listener
 }
+
+// IsToolModifier reports a +name/-name defaultTools entry.
+func IsToolModifier(entry string) bool {
+	return strings.HasPrefix(entry, "+") || strings.HasPrefix(entry, "-")
+}
+
+// GetToolListError validates a tool list from --tools: either an allowlist
+// of plain names and patterns, or a list of only +name/-name entries with
+// exact names.
+func GetToolListError(entries []string) string {
+	modifiers := 0
+	for _, entry := range entries {
+		if IsToolModifier(entry) {
+			modifiers++
+		}
+	}
+	if modifiers == 0 {
+		return ""
+	}
+	if modifiers < len(entries) {
+		return "tool names cannot be mixed with +name or -name entries"
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry, "*") {
+			return "+name and -name entries take exact tool names, not patterns: " + entry
+		}
+	}
+	return ""
+}
+
+// ApplyToolModifiers applies the +name/-name entries of entries to base in
+// order: +name adds a tool, -name removes one. Other entries are ignored.
+func ApplyToolModifiers(base, entries []string) []string {
+	tools := append([]string(nil), base...)
+	for _, entry := range entries {
+		if !IsToolModifier(entry) {
+			continue
+		}
+		name := entry[1:]
+		index := -1
+		for i, candidate := range tools {
+			if candidate == name {
+				index = i
+				break
+			}
+		}
+		if strings.HasPrefix(entry, "+") && index == -1 && name != "" {
+			tools = append(tools, name)
+		} else if strings.HasPrefix(entry, "-") && index != -1 {
+			tools = append(tools[:index], tools[index+1:]...)
+		}
+	}
+	return tools
+}
+
+// CreateToolNameMatcher matches tool names against entries: exact names,
+// or patterns where * matches any characters.
+func CreateToolNameMatcher(entries []string) func(string) bool {
+	names := map[string]bool{}
+	var patterns []*regexp.Regexp
+	for _, entry := range entries {
+		if strings.Contains(entry, "*") {
+			patterns = append(patterns, mcpToolPatternRegexp(entry))
+		} else {
+			names[entry] = true
+		}
+	}
+	return func(name string) bool {
+		if names[name] {
+			return true
+		}
+		for _, pattern := range patterns {
+			if pattern.MatchString(name) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// IsMcpToolName reports MCP tools: server tools (mcp__ prefix) and the
+// three MCP resource tools.
+func IsMcpToolName(name string) bool {
+	return strings.HasPrefix(name, "mcp__") ||
+		name == ListMcpResourcesTool || name == ListMcpResourceTemplatesTool || name == ReadMcpResourceTool
+}

@@ -98,6 +98,7 @@ func runInteractive(parsed *codingagent.CliArgs) int {
 		Tools:        parsed.Tools,
 		ExcludeTools: parsed.ExcludeTools,
 		NoTools:      noToolsModeFromCli(parsed),
+		NoMcp:        parsed.NoMcp,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
@@ -141,6 +142,7 @@ func runPrint(parsed *codingagent.CliArgs) int {
 		Tools:        parsed.Tools,
 		ExcludeTools: parsed.ExcludeTools,
 		NoTools:      noToolsModeFromCli(parsed),
+		NoMcp:        parsed.NoMcp,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)

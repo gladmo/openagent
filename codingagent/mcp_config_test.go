@@ -438,3 +438,21 @@ func mustParseJSON(t *testing.T, text string) any {
 }
 
 func boolPtr(value bool) *bool { return &value }
+
+// Port of bdd9f0399: mcp.json files with a UTF-8 BOM load.
+func TestMcpConfigAcceptsBom(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mcp.json")
+	bomConfig := "\ufeff" + `{"mcpServers":{"srv":{"type":"stdio","command":"true"}}}`
+	if err := os.WriteFile(path, []byte(bomConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded := LoadMcpConfig(struct {
+		AgentDir       string
+		Cwd            string
+		ProjectTrusted bool
+	}{AgentDir: dir})
+	if len(loaded.Servers) != 1 || loaded.Servers[0].Name != "srv" {
+		t.Fatalf("servers = %+v (errors %v)", loaded.Servers, loaded.Errors)
+	}
+}

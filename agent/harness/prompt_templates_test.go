@@ -117,3 +117,16 @@ func TestFormatPromptTemplateInvocation(t *testing.T) {
 		t.Fatalf("no-args got %q", got)
 	}
 }
+
+func TestParseCommandArgsKeepsQuotedEmptyArgs(t *testing.T) {
+	args := ParseCommandArgs(`dup "" 'x'`)
+	if len(args) != 3 || args[0] != "dup" || args[1] != "" || args[2] != "x" {
+		t.Fatalf("args = %q", args)
+	}
+	if args := ParseCommandArgs(`""`); len(args) != 1 || args[0] != "" {
+		t.Fatalf("bare quoted empty = %q", args)
+	}
+	if args := ParseCommandArgs("  "); len(args) != 0 {
+		t.Fatalf("spaces = %q", args)
+	}
+}

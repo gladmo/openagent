@@ -549,7 +549,7 @@ func normalizeExactPattern(pattern string) string {
 	if strings.HasPrefix(normalized, "./") || strings.HasPrefix(normalized, `.\`) {
 		normalized = normalized[2:]
 	}
-	return toPosixPath(normalized)
+	return toPosixPath(NormalizePathDefault(normalized))
 }
 
 func relativePosix(baseDir, path string) string {
@@ -575,7 +575,7 @@ func matchesAnyPattern(filePath string, patterns []string, baseDir string) bool 
 		parentDirPosix = toPosixPath(parentDir)
 	}
 	for _, pattern := range patterns {
-		normalized := toPosixPath(pattern)
+		normalized := toPosixPath(NormalizePathDefault(pattern))
 		if minimatch.MinimatchMatch(rel, normalized) ||
 			minimatch.MinimatchMatch(name, normalized) ||
 			minimatch.MinimatchMatch(filePathPosix, normalized) {

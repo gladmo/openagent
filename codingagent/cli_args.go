@@ -40,6 +40,7 @@ type CliArgs struct {
 	ExcludeTools         []string
 	NoTools              bool
 	NoBuiltinTools       bool
+	NoMcp                bool
 	Extensions           []string
 	NoExtensions         bool
 	Print                bool
@@ -204,12 +205,20 @@ func ParseArgs(args []string) *CliArgs {
 			i++
 			// Assign even when every part is empty: the flag's presence
 			// means an explicit (possibly empty) selection.
-			result.Tools = []string{}
+			tools := []string{}
 			for _, part := range strings.Split(args[i], ",") {
 				if trimmed := strings.TrimSpace(part); trimmed != "" {
-					result.Tools = append(result.Tools, trimmed)
+					tools = append(tools, trimmed)
 				}
 			}
+			if message := GetToolListError(tools); message != "" {
+				result.Diagnostics = append(result.Diagnostics, CliDiagnostic{Type: "error", Message: arg + ": " + message})
+			} else {
+				result.Tools = tools
+			}
+
+		case arg == "--no-mcp":
+			result.NoMcp = true
 
 		case (arg == "--exclude-tools" || arg == "-xt") && i+1 < len(args):
 			i++
@@ -434,6 +443,9 @@ type PrintSessionOptions struct {
 	// allowlist; "builtin" only empties the initial selection (custom tools
 	// stay activatable); "" = neither flag.
 	NoTools string
+	// NoMcp disables the built-in MCP support (--no-mcp): no servers
+	// connect and no MCP tools stay enabled.
+	NoMcp bool
 }
 
 // PrintSessionHost adapts the constructed session for RunPrintMode.
@@ -480,10 +492,50 @@ func SetupPrintSession(options PrintSessionOptions) (*PrintSessionHost, error) {
 // --exclude-tools filters the selection; --no-tools=all also empties the
 // registry allowlist.
 func applyPrintToolSelection(config *AgentSessionConfig, settings *SettingsManager, options PrintSessionOptions) {
-	switch {
-	case options.Tools != nil:
-		config.AllowedToolNames = append([]string{}, options.Tools...)
-	case options.NoTools == "all":
+	// --no-mcp disables the built-in MCP support: no servers connect and
+	// no MCP tools stay enabled.
+	noMcp := options.NoMcp
+
+	var toolModifiers []string
+	if options.Tools != nil {
+		for _, entry := range options.Tools {
+			if IsToolModifier(entry) {
+				toolModifiers = options.Tools
+				break
+			}
+		}
+	}
+	var selectedToolNames []string
+	hasSelection := false
+	if toolModifiers != nil {
+		selectedToolNames = ApplyToolModifiers(DefaultToolNames, toolModifiers)
+		hasSelection = true
+	} else if options.Tools != nil {
+		selectedToolNames = append([]string(nil), options.Tools...)
+		hasSelection = true
+	}
+
+	// The registry allowlist: modifiers keep the default loadout's MCP
+	// tools unless --no-tools=all; a plain list keeps MCP tools unless an
+	// entry names them (mcp__ prefix).
+	if toolModifiers != nil {
+		if options.NoTools == "all" {
+			config.AllowedToolNames = selectedToolNames
+		}
+	} else if options.Tools != nil && noMcp {
+		config.AllowedToolNames = selectedToolNames
+	} else if options.Tools != nil {
+		keepsMcp := false
+		for _, entry := range options.Tools {
+			if strings.HasPrefix(entry, "mcp__") {
+				keepsMcp = true
+				break
+			}
+		}
+		if !keepsMcp {
+			config.AllowedToolNames = selectedToolNames
+		}
+	} else if options.NoTools == "all" {
 		config.AllowedToolNames = []string{}
 	}
 	if options.ExcludeTools != nil {
@@ -491,26 +543,29 @@ func applyPrintToolSelection(config *AgentSessionConfig, settings *SettingsManag
 	}
 
 	var initial []string
-	switch {
-	case options.Tools != nil:
-		initial = append([]string{}, options.Tools...)
-	case options.NoTools != "":
+	if hasSelection {
+		initial = selectedToolNames
+	} else if options.NoTools != "" {
 		initial = []string{}
-	default:
-		if configured := settings.GetDefaultTools(); configured != nil {
-			initial = configured
-		} else {
-			initial = append([]string(nil), DefaultToolNames...)
-		}
+	} else if configured := settings.GetDefaultTools(); configured != nil {
+		initial = configured
+	} else {
+		initial = append([]string(nil), DefaultToolNames...)
 	}
 	if options.ExcludeTools != nil {
-		excluded := map[string]bool{}
-		for _, name := range options.ExcludeTools {
-			excluded[name] = true
-		}
+		excluded := CreateToolNameMatcher(options.ExcludeTools)
 		filtered := make([]string, 0, len(initial))
 		for _, name := range initial {
-			if !excluded[name] {
+			if !excluded(name) {
+				filtered = append(filtered, name)
+			}
+		}
+		initial = filtered
+	}
+	if noMcp {
+		filtered := make([]string, 0, len(initial))
+		for _, name := range initial {
+			if !IsMcpToolName(name) {
 				filtered = append(filtered, name)
 			}
 		}

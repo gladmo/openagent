@@ -143,7 +143,12 @@ func LoadProjectContextFiles(cwd, agentDir string) []ContextFileWithPath {
 	for {
 		contextFile := loadContextFileFromDir(currentDir)
 		if contextFile != nil {
-			isShadowed := shadowedContextFile != "" && CanonicalizePath(contextFile.Path) == shadowedContextFile
+			// Compare the directory's real path, not the file's: a
+			// worktree AGENTS.md that symlinks to the main repo's file
+			// resolves to the shadowed path itself, so the shadow check
+			// would drop the worktree's own copy.
+			isShadowed := shadowedContextFile != "" &&
+				filepath.Join(CanonicalizePath(currentDir), filepath.Base(contextFile.Path)) == shadowedContextFile
 			if !isShadowed && !seenPaths[contextFile.Path] {
 				ancestorContextFiles = append([]ContextFileWithPath{*contextFile}, ancestorContextFiles...)
 				seenPaths[contextFile.Path] = true
