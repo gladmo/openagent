@@ -569,6 +569,30 @@ func (t *ProcessTerminal) DrainInput(maxMs, idleMs time.Duration) {
 
 // Stop restores terminal state: progress indicator, bracketed paste, Kitty
 // protocol, raw mode, and handlers.
+// RestoreOnExit writes the terminal mode resets for exit paths that skip
+// Stop: bracketed paste off, kitty keyboard pop, modifyOtherKeys off, and
+// any progress spinner cleared, wrapped by the caller's before/after
+// sequences.
+func (t *ProcessTerminal) RestoreOnExit(before, after string) {
+	t.mu.Lock()
+	sequence := before
+	if t.progressActive {
+		sequence += terminalProgressClearSeq
+	}
+	sequence += "\x1b[?2004l"
+	if t.keyboardProtocolPushed || t.kittyActive {
+		sequence += "\x1b[<u"
+	}
+	if t.modifyOtherKeysActive {
+		sequence += "\x1b[>4;0m"
+	}
+	sequence += after
+	t.mu.Unlock()
+	// os.Stdout writes are synchronous on POSIX TTYs; a Windows
+	// asynchronous console cannot flush during exit (documented deviation).
+	_, _ = os.Stdout.WriteString(sequence)
+}
+
 func (t *ProcessTerminal) Stop() {
 	t.mu.Lock()
 	if t.progressActive {

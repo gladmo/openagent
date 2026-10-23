@@ -1043,6 +1043,37 @@ func (s *TuiAltScreen) clearTextSelection() {
 	s.selectionDragged = false
 }
 
+// ExitRestorePrefix prepends the alt-screen mode resets: synchronized
+// output ends, mouse tracking stops, autowrap re-enables, then the base
+// prefix (kitty flags were popped by the terminal's own restore).
+func (s *TuiAltScreen) ExitRestorePrefix() string {
+	prefix := s.TuiBase.ExitRestorePrefix()
+	s.mu.Lock()
+	active, mouseEnabled := s.altScreenActive, s.mouseEnabled
+	s.mu.Unlock()
+	if !active {
+		return prefix
+	}
+	restored := endSyncOutput
+	if mouseEnabled {
+		restored += disableMouseSeq
+	}
+	restored += enableAutowrap
+	return restored + prefix
+}
+
+// ExitRestoreSuffix leaves the alternate screen and shows the cursor.
+func (s *TuiAltScreen) ExitRestoreSuffix() string {
+	suffix := s.TuiBase.ExitRestoreSuffix()
+	s.mu.Lock()
+	active := s.altScreenActive
+	s.mu.Unlock()
+	if !active {
+		return suffix
+	}
+	return suffix + exitAltScreen + "\x1b[?25h"
+}
+
 // ResetTextSelection clears the selection so a transcript rebuild starts
 // from a clean selection state; a click is no longer pending.
 func (s *TuiAltScreen) ResetTextSelection() {

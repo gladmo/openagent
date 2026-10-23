@@ -10,6 +10,10 @@ import (
 	"time"
 
 	"strings"
+
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 var cellSizeResponsePattern = regexp.MustCompile(`^\x1b\[6;(\d+);(\d+)t$`)
@@ -565,9 +569,76 @@ func (t *TuiBase) Invalidate() {
 	}
 }
 
+// ExitRestorePrefix returns the mode resets written before the terminal's
+// own resets when the process exits without Stop.
+func (t *TuiBase) ExitRestorePrefix() string {
+	prefix := "\x1b[?25h"
+	if t.colorSchemeNotifications {
+		prefix = "\x1b[?2031l" + prefix
+	}
+	return prefix
+}
+
+// ExitRestoreSuffix returns the mode resets written after the terminal's
+// own resets when the process exits without Stop.
+func (t *TuiBase) ExitRestoreSuffix() string {
+	return ""
+}
+
+// installExitRestore arms a last-resort restore for exit paths that skip
+// Stop, e.g. os.Exit or a fatal signal (#11170). Hard kills (SIGKILL) and
+// panics on other goroutines cannot be covered; Go has no exit hook, so the
+// terminal modes are restored from a signal handler before re-raising.
+func (t *TuiBase) installExitRestore() {
+	if t.exitRestoreSignals != nil {
+		return
+	}
+	channel := make(chan os.Signal, 1)
+	signal.Notify(channel, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	t.exitRestoreSignals = channel
+	go func() {
+		received, ok := <-channel
+		if !ok {
+			return
+		}
+		t.restoreTerminalForExit()
+		// Re-raise with the default disposition so the exit status the
+		// parent observes matches the signal.
+		signal.Reset(syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+		if signaled, isSignal := received.(syscall.Signal); isSignal {
+			_ = syscall.Kill(syscall.Getpid(), signaled)
+		}
+		os.Exit(128)
+	}()
+}
+
+func (t *TuiBase) disposeExitRestore() {
+	if t.exitRestoreSignals != nil {
+		signal.Stop(t.exitRestoreSignals)
+		close(t.exitRestoreSignals)
+		t.exitRestoreSignals = nil
+	}
+}
+
+func (t *TuiBase) restoreTerminalForExit() {
+	t.mu.Lock()
+	stopped := t.stoppedFlag
+	prefix, suffix := t.ExitRestorePrefix(), t.ExitRestoreSuffix()
+	t.mu.Unlock()
+	if stopped {
+		return
+	}
+	if restorer, ok := t.terminalRef.(interface {
+		RestoreOnExit(before, after string)
+	}); ok {
+		restorer.RestoreOnExit(prefix, suffix)
+	}
+}
+
 // Start begins terminal input and the first render.
 func (t *TuiBase) Start() {
 	t.mu.Lock()
+	t.installExitRestore()
 	t.stoppedFlag = false
 	if t.BeforeTerminalStart != nil {
 		t.BeforeTerminalStart()
@@ -681,6 +752,7 @@ func (t *TuiBase) Stop(options *TuiStopOptions) {
 	if t.AfterTerminalStop != nil {
 		t.AfterTerminalStop(options)
 	}
+	t.disposeExitRestore()
 	t.mu.Unlock()
 }
 

@@ -266,3 +266,65 @@ func TestResolveFakeCursors(t *testing.T) {
 		t.Fatalf("hardware unfocused = %q", resolved[2])
 	}
 }
+
+// Port of the exit-restore behavior (9df819de3, adapted to Go signal
+// handling): a TUI that never stops restores terminal modes on a fatal
+// signal, and Stop disarms the restore.
+type restoreCaptureTerminal struct {
+	testTerminal
+	restoreWrites []string
+}
+
+func (t *restoreCaptureTerminal) RestoreOnExit(before, after string) {
+	t.restoreWrites = append(t.restoreWrites, before+"\x1b[?2004l"+after)
+}
+
+func TestExitRestoreArmedAndDisarmed(t *testing.T) {
+	terminal := &restoreCaptureTerminal{}
+	base := &TuiBase{terminalRef: terminal}
+	base.Start()
+	base.Stop(nil)
+	// After Stop the restore is disarmed: a late signal writes nothing.
+	base.restoreTerminalForExit()
+	if len(terminal.restoreWrites) != 0 {
+		t.Fatalf("writes after stop = %q", terminal.restoreWrites)
+	}
+
+	terminal2 := &restoreCaptureTerminal{}
+	base2 := &TuiBase{terminalRef: terminal2}
+	base2.Start()
+	base2.restoreTerminalForExit()
+	base2.Stop(nil)
+	if len(terminal2.restoreWrites) != 1 {
+		t.Fatalf("writes = %q", terminal2.restoreWrites)
+	}
+	if write := terminal2.restoreWrites[0]; write != "\x1b[?25h\x1b[?2004l" {
+		t.Fatalf("restore = %q", write)
+	}
+}
+
+func TestAltScreenExitRestoreSequences(t *testing.T) {
+	terminal := &testTerminal{}
+	screen := NewTuiAltScreen(terminal, nil, "", TuiAltScreenOptions{})
+	screen.mu.Lock()
+	screen.altScreenActive = true
+	screen.mouseEnabled = true
+	screen.mu.Unlock()
+	prefix := screen.ExitRestorePrefix()
+	wantPrefix := endSyncOutput + disableMouseSeq + enableAutowrap + "\x1b[?25h"
+	if prefix != wantPrefix {
+		t.Fatalf("prefix = %q, want %q", prefix, wantPrefix)
+	}
+	if suffix := screen.ExitRestoreSuffix(); suffix != exitAltScreen+"\x1b[?25h" {
+		t.Fatalf("suffix = %q", suffix)
+	}
+	screen.mu.Lock()
+	screen.altScreenActive = false
+	screen.mu.Unlock()
+	if prefix := screen.ExitRestorePrefix(); prefix != "\x1b[?25h" {
+		t.Fatalf("inactive prefix = %q", prefix)
+	}
+	if suffix := screen.ExitRestoreSuffix(); suffix != "" {
+		t.Fatalf("inactive suffix = %q", suffix)
+	}
+}

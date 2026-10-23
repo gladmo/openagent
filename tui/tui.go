@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"os"
 )
 
 // TuiMouseEventType is the normalized mouse event kind.
@@ -596,6 +598,9 @@ type TuiBase struct {
 	clearOnShrink            bool
 	FullRedrawCount          int
 	stoppedFlag              bool
+	// exitRestoreSignals carries fatal signals to the last-resort
+	// terminal restore (see TuiBase.installExitRestore).
+	exitRestoreSignals chan os.Signal
 
 	pendingOscColorReplies       map[int]int
 	pendingOscColorQueries       map[int][]*pendingOscColorQuery
