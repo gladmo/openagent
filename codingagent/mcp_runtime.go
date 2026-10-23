@@ -16,6 +16,8 @@ import (
 
 	"github.com/gladmo/openagent/jsonx"
 	"github.com/gladmo/openagent/mcp"
+
+	"github.com/gladmo/openagent/abort"
 )
 
 const (
@@ -169,32 +171,6 @@ func mcpWithoutTemplates(err error) error {
 	return err
 }
 
-// mcpFetchResources lists resources and templates at connect time, for
-// the counts in /mcp and `openagent mcp list`. A server whose lists fail
-// still connects: the resource tools list and read its resources on
-// demand. MCP App resources are left out.
-func mcpFetchResources(client *mcp.McpClient) (resources []mcp.Resource, resourceTemplates []mcp.ResourceTemplate) {
-	listed, _ := client.ListResources(mcp.McpRequestOptions{})
-	for _, resource := range listed {
-		if !IsMcpAppResource(resource) {
-			resources = append(resources, resource)
-		}
-	}
-	templates, templatesErr := client.ListResourceTemplates(mcp.McpRequestOptions{})
-	if templatesErr != nil && mcpWithoutTemplates(templatesErr) == nil {
-		templatesErr = nil
-		templates = nil
-	}
-	if templatesErr == nil {
-		for _, template := range templates {
-			if !IsMcpAppTemplate(template) {
-				resourceTemplates = append(resourceTemplates, template)
-			}
-		}
-	}
-	return resources, resourceTemplates
-}
-
 // McpServerConnectionOptions configure one server connection.
 type McpServerConnectionOptions struct {
 	Entry           McpServerEntry
@@ -219,18 +195,18 @@ type McpServerConnection struct {
 	// Tools are the names the server currently offers.
 	Tools []mcp.Tool
 
-	mu                sync.Mutex
-	state             McpServerState
-	err               string
-	hasResources      bool
-	resources         []mcp.Resource
-	resourceTemplates []mcp.ResourceTemplate
-	instructions      string
-	challenge         *mcp.OAuthChallenge
-	client            *mcp.McpClient
-	opening           chan mcpOpenResult
-	closed            bool
-	stderrTail        string
+	mu           sync.Mutex
+	state        McpServerState
+	err          string
+	hasResources bool
+	instructions string
+	challenge    *mcp.OAuthChallenge
+	client       *mcp.McpClient
+	opening      chan mcpOpenResult
+	// shutdown is aborted by Close; it cancels a connect in progress,
+	// including the wait between retries.
+	shutdown   *abort.Controller
+	stderrTail string
 
 	cwd             string
 	createTransport McpTransportFactory
@@ -255,6 +231,7 @@ func NewMcpServerConnection(options McpServerConnectionOptions) *McpServerConnec
 		onTools:         options.OnTools,
 		onChange:        options.OnChange,
 		log:             options.Log,
+		shutdown:        abort.NewController(),
 	}
 	oauthURL := connection.OAuthURL()
 	provider := ""
@@ -365,21 +342,6 @@ func (c *McpServerConnection) HasResources() bool {
 	return c.hasResources
 }
 
-// Resources lists what the server listed at the last connect or change,
-// without MCP App resources.
-func (c *McpServerConnection) Resources() []mcp.Resource {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]mcp.Resource(nil), c.resources...)
-}
-
-// ResourceTemplates lists the templates of the last listing.
-func (c *McpServerConnection) ResourceTemplates() []mcp.ResourceTemplate {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]mcp.ResourceTemplate(nil), c.resourceTemplates...)
-}
-
 // Instructions returns the server instructions from initialize,
 // describing its tools as a group.
 func (c *McpServerConnection) Instructions() string {
@@ -419,7 +381,7 @@ type mcpClientWaiter struct {
 // GetClient returns the connected client, connecting when needed.
 func (c *McpServerConnection) GetClient() (*mcp.McpClient, error) {
 	c.mu.Lock()
-	if c.closed {
+	if c.shutdown.Signal().Aborted() {
 		c.mu.Unlock()
 		return nil, fmt.Errorf("MCP server %q is shut down", c.Entry.Name)
 	}
@@ -600,7 +562,7 @@ func (c *McpServerConnection) needsSignIn(err error) bool {
 func (c *McpServerConnection) isClosed() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.closed
+	return c.shutdown.Signal().Aborted()
 }
 
 func (c *McpServerConnection) markNeedsAuth() {
@@ -647,11 +609,16 @@ func (c *McpServerConnection) open() (*mcp.McpClient, error) {
 		if attempt < len(retries) {
 			delay = retries[attempt]
 		}
-		closed := c.isClosed()
-		if closed || delay == 0 || !mcpIsTransientError(err) {
+		if c.isClosed() || delay == 0 || !mcpIsTransientError(err) {
 			return nil, c.connectFailed(err)
 		}
-		time.Sleep(delay)
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+		case <-c.shutdown.Signal().Done():
+			timer.Stop()
+			return nil, c.connectFailed(err)
+		}
 		if c.isClosed() {
 			return nil, c.connectFailed(err)
 		}
@@ -693,23 +660,17 @@ func (c *McpServerConnection) connectOnce() (*mcp.McpClient, error) {
 	client.OnNotification("notifications/tools/list_changed", func(any) {
 		c.refreshTools(client)
 	})
-	client.OnNotification("notifications/resources/list_changed", func(any) {
-		c.refreshResources(client)
-	})
 	stdio, _ := transport.(*mcp.StdioTransport)
 	client.OnClose(func() { c.handleClientClose(client, stdio) })
 	// Servers without the tools capability (prompts or resources only) do
 	// not answer tools/list.
 	var tools []mcp.Tool
-	var resources []mcp.Resource
-	var resourceTemplates []mcp.ResourceTemplate
-	hasResources := client.ServerCapabilities() != nil && client.ServerCapabilities().Resources != nil
 	if capabilities := client.ServerCapabilities(); capabilities != nil && capabilities.Tools != nil {
 		tools, _ = client.ListTools(mcp.McpRequestOptions{})
 	}
-	if hasResources {
-		resources, resourceTemplates = mcpFetchResources(client)
-	}
+	// Resources are not listed at connect: listing every resource can take
+	// long (a large drive, say). The resource tools list and read on demand.
+	hasResources := client.ServerCapabilities() != nil && client.ServerCapabilities().Resources != nil
 	if c.isClosed() {
 		return nil, errors.New("shut down while connecting")
 	}
@@ -724,8 +685,6 @@ func (c *McpServerConnection) connectOnce() (*mcp.McpClient, error) {
 	c.client = client
 	c.Tools = tools
 	c.hasResources = hasResources
-	c.resources = resources
-	c.resourceTemplates = resourceTemplates
 	c.instructions = instructions
 	c.state = McpServerConnected
 	c.err = ""
@@ -756,7 +715,7 @@ func (c *McpServerConnection) connectFailed(err error) error {
 		return errors.New(mcpSignInRequiredMessage(c.Entry))
 	}
 	c.mu.Lock()
-	if c.closed {
+	if c.shutdown.Signal().Aborted() {
 		c.state = McpServerClosed
 	} else {
 		c.state = McpServerFailed
@@ -775,7 +734,7 @@ func (c *McpServerConnection) connectFailed(err error) error {
 // until then the status shows why.
 func (c *McpServerConnection) handleClientClose(client *mcp.McpClient, stdio *mcp.StdioTransport) {
 	c.mu.Lock()
-	if c.client != client || c.closed {
+	if c.client != client || c.shutdown.Signal().Aborted() {
 		c.mu.Unlock()
 		return
 	}
@@ -798,7 +757,7 @@ func (c *McpServerConnection) handleClientClose(client *mcp.McpClient, stdio *mc
 func (c *McpServerConnection) refreshTools(client *mcp.McpClient) {
 	tools, err := client.ListTools(mcp.McpRequestOptions{})
 	c.mu.Lock()
-	if c.client != client || c.closed {
+	if c.client != client || c.shutdown.Signal().Aborted() {
 		c.mu.Unlock()
 		return
 	}
@@ -814,33 +773,26 @@ func (c *McpServerConnection) refreshTools(client *mcp.McpClient) {
 	c.changed()
 }
 
-func (c *McpServerConnection) refreshResources(client *mcp.McpClient) {
-	resources, resourceTemplates := mcpFetchResources(client)
-	c.mu.Lock()
-	if c.client != client || c.closed {
-		c.mu.Unlock()
-		return
-	}
-	c.resources = resources
-	c.resourceTemplates = resourceTemplates
-	c.mu.Unlock()
-	if c.onTools != nil {
-		c.onTools(c)
-	}
-	c.changed()
-}
-
 // Close shuts the connection down.
 func (c *McpServerConnection) Close() error {
 	c.mu.Lock()
-	c.closed = true
+	c.shutdown.Abort()
 	c.state = McpServerClosed
 	client := c.client
 	c.client = nil
+	opening := c.opening
 	c.mu.Unlock()
 	c.changed()
 	if client != nil {
 		_ = client.Close()
+	}
+	// Resolve once no transport of this server is open, including one that
+	// was still connecting: closing the client fails its pending
+	// initialize or discovery requests.
+	if opening != nil {
+		if result := <-opening; result.client != nil {
+			_ = result.client.Close()
+		}
 	}
 	// A refresh the server already answered may have rotated the refresh
 	// token; exiting before the new tokens are saved would lose the

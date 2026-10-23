@@ -128,20 +128,98 @@ func mcpTextOf(content []ai.ContentBlock) string {
 // CallToolResult scripts receive, with the tool's own output schema as
 // structuredContent. Codemode detects this shape to render
 // CallToolResult<T> declarations.
+// mcpContentBlockSchema describes one MCP content block for the result
+// schema.
+var mcpContentBlockSchema = jsonx.ObjFrom(
+	"type", "object",
+	"properties", jsonx.ObjFrom(
+		"type", jsonx.ObjFrom("enum", []any{"text", "image", "audio", "resource_link", "resource"}),
+		"text", jsonx.ObjFrom("type", "string"),
+		"data", jsonx.ObjFrom("type", "string"),
+		"mimeType", jsonx.ObjFrom("type", "string"),
+	),
+	"required", []any{"type"},
+	"additionalProperties", true,
+)
+
+// mcpSchemaDataKeywords hold data, so a $ref key in them is not a
+// reference.
+var mcpSchemaDataKeywords = map[string]bool{"const": true, "enum": true, "default": true, "examples": true}
+
+// mcpSchemaMapKeywords map names to schemas, so their keys are names, not
+// keywords.
+var mcpSchemaMapKeywords = map[string]bool{
+	"properties": true, "patternProperties": true, "dependentSchemas": true,
+	"dependencies": true, "$defs": true, "definitions": true,
+}
+
+// relocateMcpSchema rewrites schema as a subschema at the JSON pointer
+// pointer (#/properties/structuredContent) of the result schema: a $ref
+// that pointed at the tool schema's root keeps resolving after the tool
+// schema moves there.
+func relocateMcpSchema(schema any, pointer string) any {
+	items, isArray := schema.([]any)
+	if isArray {
+		out := make([]any, 0, len(items))
+		for _, item := range items {
+			out = append(out, relocateMcpSchema(item, pointer))
+		}
+		return out
+	}
+	obj, isObj := schema.(*jsonx.Obj)
+	if !isObj {
+		return schema
+	}
+	relocated := jsonx.NewObj()
+	for _, key := range obj.Keys() {
+		value, _ := obj.Get(key)
+		if key == "$ref" {
+			if text, isString := value.(string); isString && (text == "#" || strings.HasPrefix(text, "#/")) {
+				relocated.Set(key, pointer+strings.TrimPrefix(text, "#"))
+				continue
+			}
+			relocated.Set(key, value)
+		} else if mcpSchemaDataKeywords[key] {
+			relocated.Set(key, value)
+		} else if mcpSchemaMapKeywords[key] {
+			if mapObj, mapIsObj := value.(*jsonx.Obj); mapIsObj {
+				relocatedMap := jsonx.NewObj()
+				for _, name := range mapObj.Keys() {
+					sub, _ := mapObj.Get(name)
+					relocatedMap.Set(name, relocateMcpSchema(sub, pointer))
+				}
+				relocated.Set(key, relocatedMap)
+			} else {
+				relocated.Set(key, value)
+			}
+		} else {
+			relocated.Set(key, relocateMcpSchema(value, pointer))
+		}
+	}
+	return relocated
+}
+
+// CreateMcpResultSchema builds the output schema of every MCP tool: the
+// CallToolResult scripts receive (without _meta, which convertMcpResult
+// drops), with the tool's own output schema as structuredContent. Servers
+// may send structured content without declaring a schema for it, and it
+// may be any JSON value.
 func CreateMcpResultSchema(structuredContentSchema *jsonx.Obj) *jsonx.Obj {
-	schema := jsonx.ObjFrom(
+	structured := any(jsonx.ObjFrom())
+	if structuredContentSchema != nil {
+		structured = relocateMcpSchema(structuredContentSchema, "#/properties/structuredContent")
+	}
+	return jsonx.ObjFrom(
 		"type", "object",
 		"properties", jsonx.ObjFrom(
-			"content", jsonx.ObjFrom("type", "array", "items", jsonx.ObjFrom("type", "object")),
+			"content", jsonx.ObjFrom("type", "array", "items", mcpContentBlockSchema),
+			"structuredContent", structured,
+			"isError", jsonx.ObjFrom("type", "boolean"),
 		),
+		"required", []any{"content"},
+		// Fields newer protocol versions add.
+		"additionalProperties", true,
 	)
-	if structuredContentSchema != nil {
-		schema.MustGet("properties").(*jsonx.Obj).Set("structuredContent", structuredContentSchema)
-	}
-	schema.MustGet("properties").(*jsonx.Obj).Set("isError", jsonx.ObjFrom("type", "boolean"))
-	schema.MustGet("properties").(*jsonx.Obj).Set("_meta", jsonx.ObjFrom("type", "object"))
-	schema.Set("required", []any{"content"})
-	return schema
 }
 
 // LimitedMcpContent is the outcome of LimitMcpContent.

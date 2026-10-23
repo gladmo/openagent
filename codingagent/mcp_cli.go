@@ -65,7 +65,7 @@ Options for add:
 
 Other options:
   --json                  Print the list as JSON
-  --timeout <seconds>     How long login waits for the browser (default: 300)`,
+  --timeout <seconds>     Time limit for the whole sign-in (default: 300)`,
 		"\x1b[1m", "\x1b[22m", app, app, app, app, app, app, configDir, configDir, configDir, "{NAME}", "{NAME}")
 }
 
@@ -90,19 +90,20 @@ type McpCommandOptions struct {
 
 // mcpServerReport is one server's entry in `mcp list --json`.
 type mcpServerReport struct {
-	Name              string            `json:"name"`
-	Scope             string            `json:"scope"`
-	Source            string            `json:"source"`
-	Override          string            `json:"override,omitempty"`
-	Enabled           bool              `json:"enabled"`
-	Exposure          string            `json:"exposure"`
-	Transport         string            `json:"transport"`
-	State             string            `json:"state"`
-	Tools             []string          `json:"tools"`
-	ToolExposure      map[string]string `json:"toolExposure,omitempty"`
-	Resources         *int              `json:"resources,omitempty"`
-	ResourceTemplates *int              `json:"resourceTemplates,omitempty"`
-	Error             string            `json:"error,omitempty"`
+	Name         string            `json:"name"`
+	Scope        string            `json:"scope"`
+	Source       string            `json:"source"`
+	Override     string            `json:"override,omitempty"`
+	Enabled      bool              `json:"enabled"`
+	Exposure     string            `json:"exposure"`
+	Transport    string            `json:"transport"`
+	State        string            `json:"state"`
+	Tools        []string          `json:"tools"`
+	ToolExposure map[string]string `json:"toolExposure,omitempty"`
+	// OffersResources says the server offers resources. They are not
+	// listed: listing every one can take long.
+	OffersResources bool   `json:"resources,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 // mcpListReport is the `mcp list --json` payload.
@@ -637,8 +638,8 @@ func mcpList(loaded *LoadedMcpConfig, jsonOutput bool, untrustedNote string, opt
 			}
 			log("  tools: " + strings.Join(tools, ", "))
 		}
-		if server.Resources != nil {
-			log(fmt.Sprintf("  resources: %d, URI templates: %d", *server.Resources, *server.ResourceTemplates))
+		if server.OffersResources {
+			log("  offers resources")
 		}
 		if server.Error != "" {
 			log("  " + strings.ReplaceAll(server.Error, "\n", "\n  "))
@@ -701,10 +702,7 @@ func mcpListOne(entry McpServerEntry, options McpCommandOptions, credentials *Mc
 		report.ToolExposure = toolExposure
 	}
 	if connection.HasResources() {
-		resources := len(connection.Resources())
-		templates := len(connection.ResourceTemplates())
-		report.Resources = &resources
-		report.ResourceTemplates = &templates
+		report.OffersResources = true
 	}
 	if connection.State() != McpServerConnected {
 		report.Error = connection.Error()
@@ -736,9 +734,8 @@ func reportToJSON(report *mcpListReport) any {
 			}
 			obj.Set("toolExposure", exposures)
 		}
-		if server.Resources != nil {
-			obj.Set("resources", float64(*server.Resources))
-			obj.Set("resourceTemplates", float64(*server.ResourceTemplates))
+		if server.OffersResources {
+			obj.Set("resources", true)
 		}
 		if server.Error != "" {
 			obj.Set("error", server.Error)
@@ -777,12 +774,18 @@ func mcpLogin(entry McpServerEntry, connection *McpServerConnection, serverURL s
 		openURL = OpenBrowser
 	}
 	interactive := stdinIsTTY() && options.OpenURL == nil
+	// --timeout limits the whole sign-in (the prompt wait carries no timer
+	// of its own).
+	signInController := abort.NewController()
+	signInTimer := time.AfterFunc(timeout, signInController.Abort)
+	defer signInTimer.Stop()
 	err := SignInMcpServer(struct {
 		ServerURL string
 		Store     mcp.McpOAuthStateStore
 		Settings  McpOAuthSettings
 		Challenge *mcp.OAuthChallenge
 		Prompt    McpSignInPrompt
+		Signal    *abort.Signal
 	}{
 		ServerURL: serverURL,
 		Store:     credentials.ForServer(name, serverURL),
@@ -794,9 +797,10 @@ func mcpLogin(entry McpServerEntry, connection *McpServerConnection, serverURL s
 				openURL(authorizationURL)
 			},
 			PromptForRedirectURL: func(signal *abort.Signal) (string, error) {
-				return mcpWaitForRedirectURL(signal, timeout, interactive)
+				return mcpWaitForRedirectURL(signal, interactive)
 			},
 		},
+		Signal: signInController.Signal(),
 	})
 	if err != nil {
 		var cancelled *McpSignInCancelledError
@@ -835,12 +839,10 @@ func stdinIsTTY() bool {
 // otherwise only the browser callback can finish the sign-in. It returns
 // "" (cancelling the sign-in) after the timeout, or when the callback
 // arrived.
-func mcpWaitForRedirectURL(signal *abort.Signal, timeout time.Duration, interactive bool) (string, error) {
+func mcpWaitForRedirectURL(signal *abort.Signal, interactive bool) (string, error) {
 	controller := abort.NewController()
 	remove := signal.OnAbort(controller.Abort)
 	defer remove()
-	timer := time.AfterFunc(timeout, controller.Abort)
-	defer timer.Stop()
 	if !interactive {
 		<-controller.Signal().Done()
 		return "", nil

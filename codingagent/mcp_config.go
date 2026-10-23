@@ -82,7 +82,7 @@ func readMcpConfigFile(path, scope string, state *mcpConfigState) {
 		state.errors = append(state.errors, fmt.Sprintf("%s: %s", path, err.Error()))
 		return
 	}
-	parsed, parseErr := jsonx.Parse(string(data))
+	parsed, parseErr := jsonx.Parse(StripBom(string(data)))
 	if parseErr != nil {
 		state.errors = append(state.errors, fmt.Sprintf("%s: %s", path, parseErr.Error()))
 		return
@@ -304,7 +304,7 @@ func editMcpServers(path string, edit func(servers *jsonx.Obj, parsed *jsonx.Obj
 	text := ""
 	fileExists := true
 	if data, err := os.ReadFile(path); err == nil {
-		text = string(data)
+		text = StripBom(string(data))
 	} else if os.IsNotExist(err) {
 		fileExists = false
 	} else {

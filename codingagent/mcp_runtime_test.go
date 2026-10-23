@@ -420,3 +420,44 @@ func TestMcpWaitLockExclusive(t *testing.T) {
 		t.Fatalf("second acquire: %v", err)
 	}
 }
+
+// Port of the close-while-connecting rule (8c911797c): Close resolves only
+// after an in-flight connect attempt settles, and its client is closed.
+func TestMcpCloseWaitsForConnectingAttempt(t *testing.T) {
+	connectStarted := make(chan struct{})
+	releaseConnect := make(chan struct{})
+	entry := mcpTestEntry(t, `{"type":"stdio","command":"true"}`)
+	connection := NewMcpServerConnection(McpServerConnectionOptions{
+		Entry: entry,
+		CreateTransport: func(McpServerEntry, string, *mcp.AuthProvider) (mcp.McpTransport, error) {
+			<-connectStarted
+			<-releaseConnect
+			client, _ := mcp.CreateInMemoryTransportPair()
+			return client, nil
+		},
+	})
+	go func() {
+		close(connectStarted)
+		_, _ = connection.GetClient()
+	}()
+	<-connectStarted
+	closed := make(chan struct{})
+	go func() {
+		_ = connection.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+		t.Fatal("Close returned while the connect attempt was in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseConnect)
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not resolve after the connect attempt settled")
+	}
+	if connection.State() != McpServerClosed {
+		t.Fatalf("state = %s", connection.State())
+	}
+}

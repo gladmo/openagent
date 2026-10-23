@@ -48,7 +48,7 @@ const (
 	mcpRefreshSkew = 30 * time.Second
 	// mcpRefreshRequestTimeout bounds each request of a refresh, so it
 	// cannot hold the refresh lock or delay shutdown for long.
-	mcpRefreshRequestTimeout = 15 * time.Second
+	mcpOAuthRequestTimeout = 15 * time.Second
 	// mcpRefreshLockStale: a refresh lock its holder stopped renewing is
 	// taken over after this.
 	mcpRefreshLockStale = 20 * time.Second
@@ -543,7 +543,7 @@ func createMcpAuthProvider(options struct {
 				ResourceMetadataURL:            challengeResourceMetadata(challenge),
 				AuthorizationServerMetadataURL: settings.AuthServerMetadataURL,
 				Scope:                          challengeScope(challenge),
-				Fetch:                          boundedMcpFetch(fetch, mcpRefreshRequestTimeout),
+				Fetch:                          boundedMcpFetch(fetch, mcpOAuthRequestTimeout),
 			})
 			if err != nil {
 				return err
@@ -706,8 +706,13 @@ func waitForMcpAuthorizationResponse(
 	callback *mcp.OAuthCallbackServer,
 	state, redirectURL string,
 	prompt McpSignInPrompt,
+	signal *abort.Signal,
 ) (*mcpAuthorizationResponse, error) {
 	controller := abort.NewController()
+	if signal != nil {
+		remove := signal.OnAbort(controller.Abort)
+		defer remove()
+	}
 	fromBrowser := callback.WaitForCallback(state, redirectURLPath(redirectURL))
 	type outcome struct {
 		response *mcpAuthorizationResponse
@@ -782,14 +787,19 @@ func optionsWithPort(options mcp.OAuthCallbackServerOptions, port int) mcp.OAuth
 
 // SignInMcpServer signs in to an MCP server. It uses the stored refresh
 // token when possible; otherwise it runs the browser authorization code
-// flow. Tokens are saved to store.
+// flow. Tokens are saved to store. Signal cancels the sign-in, which fails
+// with McpSignInCancelledError.
 func SignInMcpServer(options struct {
 	ServerURL string
 	Store     mcp.McpOAuthStateStore
 	Settings  McpOAuthSettings
 	Challenge *mcp.OAuthChallenge
 	Prompt    McpSignInPrompt
+	Signal    *abort.Signal
 }) error {
+	if options.Signal != nil && options.Signal.Aborted() {
+		return &McpSignInCancelledError{}
+	}
 	serverURL := options.ServerURL
 	store := options.Store
 	settings := options.Settings
@@ -864,6 +874,8 @@ func SignInMcpServer(options struct {
 		ResourceMetadataURL:            challengeResourceMetadata(options.Challenge),
 		AuthorizationServerMetadataURL: settings.AuthServerMetadataURL,
 		Scope:                          scope,
+		Fetch:                          boundedMcpFetch(nil, mcpOAuthRequestTimeout),
+		Signal:                         options.Signal,
 		// A refresh keeps the granted scope; a server asking for more
 		// needs the browser flow.
 		SkipRefresh: stepUp,
@@ -890,8 +902,11 @@ func SignInMcpServer(options struct {
 		}
 	}
 	options.Prompt.ShowAuthorizationURL(authorizationURL)
-	response, err := waitForMcpAuthorizationResponse(callback, state, authorizationRedirectURL, options.Prompt)
+	response, err := waitForMcpAuthorizationResponse(callback, state, authorizationRedirectURL, options.Prompt, options.Signal)
 	if err != nil {
+		if options.Signal != nil && options.Signal.Aborted() {
+			return &McpSignInCancelledError{}
+		}
 		return err
 	}
 	exchangeOptions := flowOptions
@@ -899,8 +914,13 @@ func SignInMcpServer(options struct {
 	exchangeOptions.Iss = response.Iss
 	exchangeOptions.HasIss = response.HasIss
 	exchangeOptions.SkipRefresh = false
-	_, err = mcp.AuthorizeMcp(provider.AsProvider(), exchangeOptions)
-	return err
+	if _, err := mcp.AuthorizeMcp(provider.AsProvider(), exchangeOptions); err != nil {
+		if options.Signal != nil && options.Signal.Aborted() {
+			return &McpSignInCancelledError{}
+		}
+		return err
+	}
+	return nil
 }
 
 func clientInformationOf(state *mcp.McpOAuthState) *mcp.OAuthClientInformation {

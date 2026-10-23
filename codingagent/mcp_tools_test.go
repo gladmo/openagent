@@ -279,3 +279,54 @@ func TestTruncateMiddleCutsAtCharacterBoundaries(t *testing.T) {
 		t.Fatalf("runes do not add up: %d+%d+%d != %d", headRunes, tailRunes, result.RemovedChars, len([]rune(text)))
 	}
 }
+
+// Port of the result-schema rework (24382bedd, 67996ab75): typed content
+// blocks, relocated $refs, no _meta, additionalProperties, and an
+// undeclared structuredContent that accepts any JSON.
+func TestCreateMcpResultSchema(t *testing.T) {
+	undeclared := CreateMcpResultSchema(nil)
+	structured := undeclared.MustGet("properties").(*jsonx.Obj).MustGet("structuredContent")
+	if obj, ok := structured.(*jsonx.Obj); !ok || obj.Len() != 0 {
+		t.Fatalf("undeclared structuredContent = %v", structured)
+	}
+	if _, has := undeclared.MustGet("properties").(*jsonx.Obj).Get("_meta"); has {
+		t.Fatal("_meta still declared")
+	}
+	if additional, _ := undeclared.Get("additionalProperties"); additional != true {
+		t.Fatalf("additionalProperties = %v", additional)
+	}
+	items := undeclared.MustGet("properties").(*jsonx.Obj).MustGet("content").(*jsonx.Obj).MustGet("items").(*jsonx.Obj)
+	blockTypes := items.MustGet("properties").(*jsonx.Obj).MustGet("type").(*jsonx.Obj).MustGet("enum").([]any)
+	if len(blockTypes) != 5 || blockTypes[0] != "text" || blockTypes[4] != "resource" {
+		t.Fatalf("content block types = %v", blockTypes)
+	}
+
+	withRefs := CreateMcpResultSchema(mustParseJSONObj(t, `{
+		"type": "object",
+		"properties": {"value": {"$ref": "#/$defs/Item"}},
+		"$defs": {"Item": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}}
+	}`))
+	props := withRefs.MustGet("properties").(*jsonx.Obj).MustGet("structuredContent").(*jsonx.Obj)
+	value := props.MustGet("properties").(*jsonx.Obj).MustGet("value").(*jsonx.Obj)
+	if ref, _ := value.Get("$ref"); ref != "#/properties/structuredContent/$defs/Item" {
+		t.Fatalf("relocated $ref = %v", ref)
+	}
+	defs := props.MustGet("$defs").(*jsonx.Obj)
+	item := defs.MustGet("Item").(*jsonx.Obj)
+	if _, has := item.MustGet("properties").(*jsonx.Obj).Get("id"); !has {
+		t.Fatal("relocated $defs lost the item schema")
+	}
+}
+
+func mustParseJSONObj(t *testing.T, text string) *jsonx.Obj {
+	t.Helper()
+	value, err := jsonx.Parse(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj, ok := value.(*jsonx.Obj)
+	if !ok {
+		t.Fatalf("not an object: %v", value)
+	}
+	return obj
+}
