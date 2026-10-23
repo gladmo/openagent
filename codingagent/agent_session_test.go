@@ -11,8 +11,8 @@ import (
 	"github.com/gladmo/openagent/agent"
 	"github.com/gladmo/openagent/ai"
 
-
-	"github.com/gladmo/openagent/typebox")
+	"github.com/gladmo/openagent/typebox"
+)
 
 func newTestSession(t *testing.T) *AgentSession {
 	t.Helper()

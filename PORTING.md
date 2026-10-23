@@ -32,6 +32,7 @@ Extension port (user-approved plan + [Agent Note](.agents/notes/proposed/archite
 | M0 | mcp/ package: jsonrpc + protocol + transports (stdio/streamable-http/in-memory) + client + oauth closure + tests (from pi/packages/mcp @ a276dabe5) | **done** |
 | M1 | codingagent MCP runtime: mcp-servers/config/log/oauth/tools-helpers/runtime + `openagent mcp` CLI + supporting agent/ai/truncate additions + tests | **done** |
 | M2 | MCP extension host wiring: extensions/mcp/index.ts + ui.ts + ToolDefinition wrappers (exposure/namespace/outputSchema), /mcp command, codemode/tool_search activation | pending (needs CA4/CA6 surfaces) |
+| R | 区间迁移 a276dabe5..bd3c9b823（已移植面）：R1 telemetry 翻新 + chord Context.telemetry；R2 身份/计时；R3 ai 修复包；R4 mcp 修复 + MCP 运行时切片；R5 tui 修复包；R6 codingagent 修复包；R7 目录刷新 | **done**（durable/chord2/pi-env/codemode/未移植 provider 延后，见 PARITY.md「区间迁移」缺口台账） |
 
 Commands: `gofmt -l .` (empty), `go vet ./...`, `go test ./...` — all green as of P0.
 

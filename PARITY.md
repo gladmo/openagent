@@ -1,6 +1,6 @@
 # PARITY.md — pi/packages/agent → openagent 导出审计
 
-基准：pi @ `ff72faba2`。本文按源包逐文件审计 Go 侧的移植状态：
+基准：pi @ `ff72faba2`，加上 `a276dabe5..bd3c9b823` 区间的已移植面（见「区间迁移」节）。本文按源包逐文件审计 Go 侧的移植状态：
 **✅ 完成**（含测试）、**🟡 部分**（核心语义已移植，集成面待接）、**⬜ 未移植**。
 行数指 TS 源。测试：`go build ./... && go vet ./... && go test ./...` 全绿（21 包）。
 
@@ -152,6 +152,14 @@
   membrane/tracker 采用文档化的 Go 等价物（句柄守卫/键差分）；运行时供应商流经
   ai.Provider 流式面注入。逐文件差异记录于 `PORTING.md` 各轮条目。
 - 接续点与逐轮记录见 `PORTING.md`。
+
+## 区间迁移：pi a276dabe5..bd3c9b823（已移植面）
+
+用户指定的第二个区间。已移植（逐提交映射见各 commit message）：telemetry 全面翻新（metrics/propagation/span links/store/RenderTrace +conformance 扩组）、chord `Context.Telemetry()`、ai telemetry spans 与`telemetry` 选项、ClientIdentity/PI_ATTRIBUTION/user-agent、durationMs计时（ai 流 + agent 工具执行）、ai 重试/解析/转换/estimate/采样/faux/anthropic/responses 全部修复（含 TranscriptToolSupport 三态与configuration_update effort）、mcp/ 五修复（iss 无元数据拒绝、DCRapplication_type、structuredContent 任意 JSON、send 信号、OAuth 信号 +lastToken close）、codingagent MCP 运行时（close 等待、资源不列举、sign-in 信号、BOM、结果 schema 重构）、tui 十五修复（program-status、假光标、CJK 强调、退出恢复、shift 符号键、终端回复过滤等）、codingagent（模型引用单选策略 + 默认模型图、压缩修复、工具选择modifiers/patterns/--no-mcp、隐藏工具、晚注册工具激活、print 截断告警、输出文件助手、剪贴板/ANSI/模板/资源模式/worktree 修复）、内嵌目录快照刷新到 bd3c9b823。
+
+**延后（缺口台账）**：durable（27K 行，依赖 chord2）、chord2 宿主运行时（coding-agent 零引用）、chord/sqlite 与 telemetry-sqlite、chord/output、pi-env（SSH 远程环境）、codemode 增强（JS 引擎决策未做）、未移植provider 面（azure 本体、OpenRouter 个性化目录 + 远程目录框架、Decisions分类器、kimi-coding、Mistral/Gemini/Bedrock 专属修复）、OAuth 登录流、package-manager-cli、export-html CJK vendor、CA4/CA8/M2 依赖项（扩展对话框栈、program-status reporter、settings-selector、M2 索引）。
+
+**区间内偏差（Go 语义）**：telemetry carrier 表为实例域（无 WeakMap）；RenderTrace 属性排序按键排序；span 时间戳毫秒整；detailed UA 报告 go运行时段；退出恢复用 signal.Notify（os.Exit/异 goroutine panic 不可恢复，Agent Note 见 .agents/notes/）；RE2 无环视 → 独立状态码模式消费边界字符、terminal-reply 检测为过程式扫描；CJK 强调以 punct+word 拒绝近似marked-cjk-friendly 的 flanking；mode 非 1:1 面维持既有偏差。
 
 ## MCP 移植：pi/packages/mcp @ a276dabe5（M0–M2）✅🟡
 
