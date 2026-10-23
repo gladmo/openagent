@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"runtime"
 )
 
 func TestIsRemoteSession(t *testing.T) {
@@ -123,5 +125,32 @@ func TestKeyDisplayText(t *testing.T) {
 	// Unknown binding: empty.
 	if got := KeyDisplayText("not.a.binding"); got != "" {
 		t.Fatalf("unknown = %q", got)
+	}
+}
+
+// Ports of the clipboard fixes: PI_CLIPBOARD_OSC52 (3e477eab5) and Termux
+// on Android (592fb57b7).
+func TestIsRemoteSessionHonorsOsc52Override(t *testing.T) {
+	if isRemoteSession(map[string]string{}) {
+		t.Fatal("plain session counted remote")
+	}
+	if !isRemoteSession(map[string]string{"PI_CLIPBOARD_OSC52": "1"}) {
+		t.Fatal("OSC 52 override ignored")
+	}
+	if !isRemoteSession(map[string]string{"SSH_CONNECTION": "1"}) {
+		t.Fatal("SSH session ignored")
+	}
+}
+
+func TestReadClipboardTermuxRunsOffLinux(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		t.Skip("linux uses the full command set")
+	}
+	// On android/darwin, Termux must still be consulted: the helper is
+	// absent here, so the read stays empty but must not panic or skip the
+	// branch. TERMUX_VERSION being present selects the termux command.
+	t.Setenv("TERMUX_VERSION", "0.118")
+	if text := ReadClipboardText(); text != "" {
+		t.Fatalf("text = %q", text)
 	}
 }

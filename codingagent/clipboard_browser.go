@@ -19,9 +19,10 @@ import (
 const maxOsc52EncodedLength = 100_000
 
 // isRemoteSession reports SSH/Mosh clients (whose clipboard lives on the
-// client side).
+// client side). PI_CLIPBOARD_OSC52=1 covers remote clients that leave no
+// SSH markers, such as multiplexer attaches or IDE daemons.
 func isRemoteSession(env map[string]string) bool {
-	return env["SSH_CONNECTION"] != "" || env["SSH_CLIENT"] != "" || env["MOSH_CONNECTION"] != ""
+	return env["SSH_CONNECTION"] != "" || env["SSH_CLIENT"] != "" || env["MOSH_CONNECTION"] != "" || env["PI_CLIPBOARD_OSC52"] == "1"
 }
 
 // emitOsc52 writes the OSC 52 clipboard sequence; false when oversized.
@@ -38,6 +39,9 @@ func emitOsc52(text string) bool {
 // nil bytes = failure.
 func runClipboardCommand(command string, args []string, input string, timeoutMs int) ([]byte, bool) {
 	cmd := exec.Command(command, args...)
+	// Detach on POSIX so the helper leaves pi's process group and Ctrl+Z
+	// suspend (SIGTSTP to the group) does not stop the clipboard owner.
+	cmd.SysProcAttr = detachedSysProcAttr()
 	if input != "" {
 		cmd.Stdin = strings.NewReader(input)
 	} else {
@@ -79,22 +83,25 @@ func isWSL(env map[string]string) bool {
 // unavailable).
 func ReadClipboardText() string {
 	env := envMap()
+	type command struct {
+		name string
+		args []string
+	}
+	var commands []command
+	// Termux reports platform "android", not "linux".
+	if env["TERMUX_VERSION"] != "" {
+		commands = append(commands, command{"termux-clipboard-get", nil})
+	}
 	if runtime.GOOS == "linux" {
-		type command struct {
-			name string
-			args []string
-		}
-		var commands []command
-		if env["TERMUX_VERSION"] != "" {
-			commands = append(commands, command{"termux-clipboard-get", nil})
-		}
+		var linuxCommands []command
 		if env["WAYLAND_DISPLAY"] != "" {
 			commands = append(commands, command{"wl-paste", []string{"--no-newline", "--type", "text"}})
 		}
 		if env["DISPLAY"] != "" {
-			commands = append(commands, command{"xclip", []string{"-selection", "clipboard", "-out"}})
-			commands = append(commands, command{"xsel", []string{"--clipboard", "--output"}})
+			linuxCommands = append(linuxCommands, command{"xclip", []string{"-selection", "clipboard", "-out"}})
+			linuxCommands = append(linuxCommands, command{"xsel", []string{"--clipboard", "--output"}})
 		}
+		commands = append(commands, linuxCommands...)
 		for _, entry := range commands {
 			if bytes, ok := runClipboardCommand(entry.name, entry.args, "", 5000); ok {
 				return string(bytes)

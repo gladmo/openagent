@@ -161,3 +161,47 @@ func TestExecuteBashSplitRunes(t *testing.T) {
 		t.Fatalf("output = %q", result.Output)
 	}
 }
+
+// Port of splitIncompleteAnsiSuffix (27c7b6ff4): an escape sequence split
+// across chunks stays pending instead of leaking partial codes.
+func TestSplitIncompleteAnsiSuffix(t *testing.T) {
+	complete, pending := SplitIncompleteAnsiSuffix("plain \x1b[31mred\x1b[0m text")
+	if complete != "plain \x1b[31mred\x1b[0m text" || pending != "" {
+		t.Fatalf("complete=%q pending=%q", complete, pending)
+	}
+	complete, pending = SplitIncompleteAnsiSuffix("text \x1b[3")
+	if complete != "text " || pending != "\x1b[3" {
+		t.Fatalf("csi complete=%q pending=%q", complete, pending)
+	}
+	complete, pending = SplitIncompleteAnsiSuffix("text \x1b]0;titl")
+	if complete != "text " || pending != "\x1b]0;titl" {
+		t.Fatalf("osc complete=%q pending=%q", complete, pending)
+	}
+	// A trailing ESC may still start ESC\, the OSC terminator.
+	complete, pending = SplitIncompleteAnsiSuffix("\x1b]0;title\x1b")
+	if complete != "\x1b]0;title" || pending != "\x1b" {
+		t.Fatalf("terminator complete=%q pending=%q", complete, pending)
+	}
+}
+
+func TestBashExecutorStripsAnsiSplitAcrossChunks(t *testing.T) {
+	// Two chunks split inside one escape sequence (#10730-era ansi.ts):
+	// the carry must complete the sequence before stripping.
+	first := []byte("a\x1b[3")
+	second := []byte("1mb")
+	var chunks []string
+	ops := &stubExecOperations{output: []string{string(first), string(second)}, exitCode: 0}
+	result, err := ExecuteBashWithOperations("cmd", t.TempDir(), ops, &BashExecutorOptions{OnChunk: func(chunk string) { chunks = append(chunks, chunk) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode == nil || *result.ExitCode != 0 {
+		t.Fatalf("exit = %v", result.ExitCode)
+	}
+	if strings.Contains(result.Output, "\x1b") {
+		t.Fatalf("output leaked escape codes: %q", result.Output)
+	}
+	if result.Output != "ab" {
+		t.Fatalf("output = %q", result.Output)
+	}
+}
