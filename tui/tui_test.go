@@ -47,17 +47,18 @@ func (t *testTerminal) Write(data string) {
 	t.Writes = append(t.Writes, data)
 }
 
-func (t *testTerminal) Columns() int              { return t.columnCount }
-func (t *testTerminal) Rows() int                 { return t.rowCount }
-func (t *testTerminal) KittyProtocolActive() bool { return false }
-func (t *testTerminal) MoveBy(lines int)          {}
-func (t *testTerminal) HideCursor()               {}
-func (t *testTerminal) ShowCursor()               {}
-func (t *testTerminal) ClearLine()                {}
-func (t *testTerminal) ClearFromCursor()          {}
-func (t *testTerminal) ClearScreen()              {}
-func (t *testTerminal) SetTitle(title string)     {}
-func (t *testTerminal) SetProgress(active bool)   {}
+func (t *testTerminal) Columns() int                          { return t.columnCount }
+func (t *testTerminal) Rows() int                             { return t.rowCount }
+func (t *testTerminal) KittyProtocolActive() bool             { return false }
+func (t *testTerminal) MoveBy(lines int)                      {}
+func (t *testTerminal) HideCursor()                           {}
+func (t *testTerminal) ShowCursor()                           {}
+func (t *testTerminal) ClearLine()                            {}
+func (t *testTerminal) ClearFromCursor()                      {}
+func (t *testTerminal) ClearScreen()                          {}
+func (t *testTerminal) SetTitle(title string)                 {}
+func (t *testTerminal) SetProgress(active bool)               {}
+func (t *testTerminal) SetProgramStatus(status ProgramStatus) {}
 
 func (t *testTerminal) SendInput(data string) {
 	t.mu.Lock()

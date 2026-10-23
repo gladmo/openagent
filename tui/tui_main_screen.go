@@ -345,7 +345,7 @@ func (s *TuiMainScreen) doRender() {
 	}
 
 	// Render all components to get new lines.
-	newLines := s.Render(width)
+	newLines := s.resolveFakeCursors(s.Render(width))
 
 	// Composite overlays before the differential compare.
 	if s.hasOverlayEntries() {

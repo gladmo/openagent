@@ -236,16 +236,19 @@ func mdLexBlockLatex(lines []string, pos int) *mdLatexResult {
 			remainder: remainder,
 		}
 	}
-	if match := mdBlockLatexDollar.FindStringSubmatch(source); match != nil && strings.TrimSpace(match[1]) != "" && mdBlockLatexEndsLine(source, match[0]) {
+	// Display math never spans a table. Without this check, an unclosed
+	// "$$" or "\[" pairs with a later opener or stays pending, swallowing
+	// the table (#11159).
+	if match := mdBlockLatexDollar.FindStringSubmatch(source); match != nil && strings.TrimSpace(match[1]) != "" && mdBlockLatexEndsLine(source, match[0]) && !mdContainsTableStart(match[1]) {
 		return build(match[0], strings.TrimSpace(match[1]), false)
 	}
-	if match := mdBlockLatexBracket.FindStringSubmatch(source); match != nil && strings.TrimSpace(match[1]) != "" {
+	if match := mdBlockLatexBracket.FindStringSubmatch(source); match != nil && strings.TrimSpace(match[1]) != "" && !mdContainsTableStart(match[1]) {
 		return build(match[0], strings.TrimSpace(match[1]), false)
 	}
-	if match := mdBlockLatexPendBrk.FindStringSubmatch(source); match != nil {
+	if match := mdBlockLatexPendBrk.FindStringSubmatch(source); match != nil && !mdContainsTableStart(match[1]) {
 		return build(match[0], match[1], true)
 	}
-	if match := mdBlockLatexPendDol.FindStringSubmatch(source); match != nil && mdLooksLikePendingDollarMath(match[1]) {
+	if match := mdBlockLatexPendDol.FindStringSubmatch(source); match != nil && mdLooksLikePendingDollarMath(match[1]) && !mdContainsTableStart(match[1]) {
 		return build(match[0], match[1], true)
 	}
 	return nil
@@ -255,11 +258,19 @@ func mdLexBlockLatex(lines []string, pos int) *mdLatexResult {
 // line (paragraph boundary check; no consumption).
 func mdBlockLatexStartsAt(lines []string, pos int) bool {
 	source := strings.Join(lines[pos:], "\n")
-	return mdBlockLatexDollar.MatchString(source) ||
-		mdBlockLatexBracket.MatchString(source) ||
-		mdBlockLatexPendBrk.MatchString(source) ||
-		(mdBlockLatexPendDol.MatchString(source) &&
-			mdLooksLikePendingDollarMath(mdBlockLatexPendDol.FindStringSubmatch(source)[1]))
+	if match := mdBlockLatexDollar.FindStringSubmatch(source); match != nil && strings.TrimSpace(match[1]) != "" && mdBlockLatexEndsLine(source, match[0]) && !mdContainsTableStart(match[1]) {
+		return true
+	}
+	if match := mdBlockLatexBracket.FindStringSubmatch(source); match != nil && strings.TrimSpace(match[1]) != "" && !mdContainsTableStart(match[1]) {
+		return true
+	}
+	if match := mdBlockLatexPendBrk.FindStringSubmatch(source); match != nil && !mdContainsTableStart(match[1]) {
+		return true
+	}
+	if match := mdBlockLatexPendDol.FindStringSubmatch(source); match != nil && mdLooksLikePendingDollarMath(match[1]) && !mdContainsTableStart(match[1]) {
+		return true
+	}
+	return false
 }
 
 func mdTrimLastNewline(s string) string {
@@ -577,4 +588,21 @@ func mdBlockLatexEndsLine(source, consumed string) bool {
 		return true
 	}
 	return source[end] == '\n'
+}
+
+// mdTableDelimiterRow matches a GFM delimiter row such as "|---|---|".
+var mdTableDelimiterRow = regexp.MustCompile(`^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$`)
+
+// mdContainsTableStart reports whether source starts a GFM table: a header
+// row followed by a delimiter row. The header needs a "|" only when the
+// delimiter has none.
+func mdContainsTableStart(source string) bool {
+	lines := strings.Split(source, "\n")
+	for index := 0; index+1 < len(lines); index++ {
+		delimiterRow := lines[index+1]
+		if (strings.Contains(delimiterRow, "|") || strings.Contains(lines[index], "|")) && mdTableDelimiterRow.MatchString(delimiterRow) {
+			return true
+		}
+	}
+	return false
 }

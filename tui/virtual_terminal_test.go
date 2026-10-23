@@ -434,3 +434,6 @@ func (vt *virtualTerminal) applyCSI(params string, final byte) {
 		// ignore.
 	}
 }
+
+// SetProgramStatus implements Terminal; the virtual terminal ignores it.
+func (t *virtualTerminal) SetProgramStatus(status ProgramStatus) {}

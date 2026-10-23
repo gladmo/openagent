@@ -177,6 +177,21 @@ func IsFocusable(component Component) bool {
 // cursor there.
 const CURSOR_MARKER = "\x1b_pi:c\x07"
 
+// Fake cursor markers: zero-width APC sequences around the text drawn as
+// the cursor. See resolveFakeCursors.
+const FAKE_CURSOR_START = "\x1b_pi:fc\x07"
+const FAKE_CURSOR_END = "\x1b_pi:/fc\x07"
+
+// focusedFakeCursorPattern matches CURSOR_MARKER directly followed by a
+// fake cursor; truncating a line right after the cursor cell drops the end
+// marker, so the end is optional.
+var focusedFakeCursorPattern = regexp.MustCompile(`(\x1b_pi:c\x07)\x1b_pi:fc\x07([\s\S]*?)(?:\x1b_pi:/fc\x07|$)`)
+
+// RenderFakeCursor wraps text in fake cursor markers.
+func RenderFakeCursor(text string) string {
+	return FAKE_CURSOR_START + text + FAKE_CURSOR_END
+}
+
 // OverlayAnchor is an overlay positioning anchor.
 type OverlayAnchor string
 

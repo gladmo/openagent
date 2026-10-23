@@ -475,3 +475,16 @@ func TestAutocompleteShouldTriggerFileCompletion(t *testing.T) {
 		t.Fatal("command argument should trigger")
 	}
 }
+
+// Port of the fd query escaping (#10972): single-segment queries with regex
+// metacharacters must match literally.
+func TestBuildFdPathQueryEscapesSingleSegment(t *testing.T) {
+	query := autocompleteBuildFdPathQuery("(group).tsx")
+	if query != `\(group\)\.tsx` {
+		t.Fatalf("single-segment query = %q", query)
+	}
+	multi := autocompleteBuildFdPathQuery("pages/[id].tsx/main.go")
+	if !strings.HasPrefix(multi, `pages[\\/]`) || !strings.Contains(multi, "main") {
+		t.Fatalf("multi-segment query = %q", multi)
+	}
+}

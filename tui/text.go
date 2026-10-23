@@ -172,3 +172,13 @@ func (s *Spacer) Render(width int) []string {
 	result := make([]string, s.lines)
 	return result
 }
+
+// SetPaddingX changes the horizontal padding and invalidates the cache
+// (setPaddingX).
+func (t *Text) SetPaddingX(padding int) {
+	if t.paddingX == padding {
+		return
+	}
+	t.paddingX = padding
+	t.Invalidate()
+}

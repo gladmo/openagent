@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strconv"
 	"time"
+
+	"strings"
 )
 
 var cellSizeResponsePattern = regexp.MustCompile(`^\x1b\[6;(\d+);(\d+)t$`)
@@ -1153,7 +1155,7 @@ func (t *TuiBase) CompositeOverlays(lines []string, termWidth, termHeight int) [
 		// overlay height.
 		sizing := t.resolveOverlayLayoutLocked(entry.options, 0, termWidth, termHeight)
 
-		overlayLines := entry.component.Render(sizing.width)
+		overlayLines := t.resolveFakeCursors(entry.component.Render(sizing.width))
 
 		if sizing.hasMaxHeight && len(overlayLines) > sizing.maxHeight {
 			overlayLines = overlayLines[:sizing.maxHeight]
@@ -1312,4 +1314,27 @@ func (t *TuiBase) QueryTerminalColorScheme(timeoutMs int) chan TerminalColorSche
 	t.terminalRef.Write("\x1b[?996n")
 	t.mu.Unlock()
 	return result
+}
+
+// resolveFakeCursors resolves fake cursor markers to reverse video. When
+// the hardware cursor is shown, a fake cursor directly after
+// CURSOR_MARKER is dropped because the terminal cursor is drawn there.
+// Fake cursors of components without focus have no CURSOR_MARKER and stay
+// visible.
+func (t *TuiBase) resolveFakeCursors(lines []string) []string {
+	out := make([]string, len(lines))
+	for index, line := range lines {
+		if !strings.Contains(line, FAKE_CURSOR_START) {
+			out[index] = line
+			continue
+		}
+		resolved := line
+		if t.showHardwareCursor {
+			resolved = focusedFakeCursorPattern.ReplaceAllString(resolved, "$1$2")
+		}
+		resolved = strings.ReplaceAll(resolved, FAKE_CURSOR_START, "\x1b[7m")
+		resolved = strings.ReplaceAll(resolved, FAKE_CURSOR_END, "\x1b[27m")
+		out[index] = resolved
+	}
+	return out
 }

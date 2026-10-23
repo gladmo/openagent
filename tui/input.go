@@ -415,7 +415,7 @@ func (i *Input) Render(width int) []string {
 		if i.focusedFlag {
 			marker = CURSOR_MARKER
 		}
-		cursorChar := "\x1b[7m" + i.placeholderStyle(atCursor) + "\x1b[27m"
+		cursorChar := RenderFakeCursor(i.placeholderStyle(atCursor))
 		textWithCursor := marker + cursorChar + i.placeholderStyle(afterCursor)
 		padding := stringRepeat(" ", maxInt(0, availableWidth-VisibleWidth(textWithCursor)))
 		return []string{i.prompt + textWithCursor + padding}
@@ -478,7 +478,9 @@ func (i *Input) Render(width int) []string {
 	}
 
 	// ESC[7m reverse video, ESC[27m normal.
-	cursorChar := "\x1b[7m" + atCursor + "\x1b[27m"
+	// The TUI draws the fake cursor in reverse video, or omits it when
+	// the hardware cursor is shown.
+	cursorChar := RenderFakeCursor(atCursor)
 	textWithCursor := beforeCursor + marker + cursorChar + afterCursor
 
 	visualLength := VisibleWidth(textWithCursor)

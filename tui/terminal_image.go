@@ -125,6 +125,14 @@ func detectCapabilitiesFromEnvironment(tmuxForwardsHyperlink func() bool) Termin
 		return TerminalCapabilities{Images: ImageProtocolNone, TrueColor: hasTrueColorHint, Hyperlinks: false}
 	}
 
+	if termProgram == "herdr" {
+		return TerminalCapabilities{Images: ImageProtocolKitty, TrueColor: hasTrueColorHint, Hyperlinks: true}
+	}
+
+	if termProgram == "rex" {
+		return TerminalCapabilities{Images: ImageProtocolKitty, TrueColor: true, Hyperlinks: true}
+	}
+
 	if os.Getenv("KITTY_WINDOW_ID") != "" || termProgram == "kitty" {
 		return TerminalCapabilities{Images: ImageProtocolKitty, TrueColor: true, Hyperlinks: true}
 	}

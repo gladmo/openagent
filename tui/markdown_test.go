@@ -641,3 +641,51 @@ func TestMarkdownZeroThemeRendersAllBlockForms(t *testing.T) {
 		}
 	}
 }
+
+// Port of the unclosed-display-math table cases (#11159).
+func TestMarkdownUnclosedDisplayMathBeforeTables(t *testing.T) {
+	table := []string{"| A | B |", "|---|---|", "| 1 | 2 |"}
+	renderedTable := []string{"┌───┬───┐", "│ A │ B │", "├───┼───┤", "│ 1 │ 2 │", "└───┴───┘"}
+	render := func(source string) []string {
+		markdown := NewMarkdown(source, 0, 0, defaultMarkdownTheme, nil, nil)
+		lines := markdown.Render(80)
+		out := make([]string, len(lines))
+		for i, line := range lines {
+			out[i] = strings.TrimRight(stripAnsi(line), " ")
+		}
+		return out
+	}
+
+	got := render("Intro\n\n$$\n\n" + strings.Join(table, "\n") + "\n\nAfter")
+	want := []string{"Intro", "", "$$", ""}
+	want = append(want, renderedTable...)
+	want = append(want, "", "After")
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("orphan $$:\n%q\nwant\n%q", got, want)
+	}
+
+	got = render("$$\nx = 1\n\n" + strings.Join(table, "\n"))
+	want = append([]string{"$$", "x = 1", ""}, renderedTable...)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("math-like $$:\n%q\nwant\n%q", got, want)
+	}
+
+	got = render("Intro\n\n$$\nx = 1\n\n" + strings.Join(table, "\n") + "\n\n$$\ny^2\n$$")
+	want = []string{"Intro", "", "$$", "x = 1", ""}
+	want = append(want, renderedTable...)
+	want = append(want, "", "y²")
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("no pairing across a table:\n%q\nwant\n%q", got, want)
+	}
+
+	// Pipe-free single-column delimiter row still gates.
+	if !mdContainsTableStart("| A |\n:---:\n| 1 |") {
+		t.Fatal("pipe-free delimiter not detected")
+	}
+	if !mdContainsTableStart("Value\n| --- |\n1") {
+		t.Fatal("pipe-free header not detected")
+	}
+	if mdContainsTableStart("plain text\nno table here") {
+		t.Fatal("table falsely detected")
+	}
+}

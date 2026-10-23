@@ -28,8 +28,8 @@ var TUIKeybindings = map[Keybinding]KeybindingDefinition{
 	"tui.editor.cursorRight":        {DefaultKeys: []KeyId{"right", "ctrl+f"}, Description: "Move cursor right"},
 	"tui.editor.cursorWordLeft":     {DefaultKeys: []KeyId{"alt+left", "ctrl+left", "alt+b"}, Description: "Move cursor word left"},
 	"tui.editor.cursorWordRight":    {DefaultKeys: []KeyId{"alt+right", "ctrl+right", "alt+f"}, Description: "Move cursor word right"},
-	"tui.editor.cursorLineStart":    {DefaultKeys: []KeyId{"home", "ctrl+home", "ctrl+a"}, Description: "Move to line start"},
-	"tui.editor.cursorLineEnd":      {DefaultKeys: []KeyId{"end", "ctrl+end", "ctrl+e"}, Description: "Move to line end"},
+	"tui.editor.cursorLineStart":    {DefaultKeys: []KeyId{"home", "ctrl+a"}, Description: "Move to line start"},
+	"tui.editor.cursorLineEnd":      {DefaultKeys: []KeyId{"end", "ctrl+e"}, Description: "Move to line end"},
 	"tui.editor.jumpForward":        {DefaultKeys: []KeyId{"ctrl+]"}, Description: "Jump forward to character"},
 	"tui.editor.jumpBackward":       {DefaultKeys: []KeyId{"ctrl+alt+]"}, Description: "Jump backward to character"},
 	"tui.editor.pageUp":             {DefaultKeys: []KeyId{"pageUp", "ctrl+pageUp"}, Description: "Page up"},
@@ -67,8 +67,8 @@ var TUIKeybindings = map[Keybinding]KeybindingDefinition{
 	"tui.altScreen.searchNext":     {DefaultKeys: []KeyId{"enter", "ctrl+g"}, Description: "Select the next search match"},
 	"tui.altScreen.searchPrevious": {DefaultKeys: []KeyId{"shift+enter", "ctrl+shift+g"}, Description: "Select the previous search match"},
 	"tui.altScreen.searchClose":    {DefaultKeys: []KeyId{"escape"}, Description: "Close transcript search"},
-	"tui.altScreen.top":            {DefaultKeys: []KeyId{"home"}, Description: "Scroll viewport to top"},
-	"tui.altScreen.bottom":         {DefaultKeys: []KeyId{"end"}, Description: "Scroll viewport to bottom"},
+	"tui.altScreen.top":            {DefaultKeys: []KeyId{"ctrl+home"}, Description: "Scroll viewport to top"},
+	"tui.altScreen.bottom":         {DefaultKeys: []KeyId{"ctrl+end"}, Description: "Scroll viewport to bottom"},
 }
 
 // KeybindingConflict reports a key claimed by multiple user bindings.

@@ -110,7 +110,9 @@ func autocompleteEscapeRegex(value string) string {
 func autocompleteBuildFdPathQuery(query string) string {
 	normalized := autocompleteToDisplayPath(query)
 	if !strings.Contains(normalized, "/") {
-		return normalized
+		// Single-segment queries are regex-escaped so fd matches paths like
+		// pages/[id].tsx literally (#10972).
+		return autocompleteEscapeRegex(normalized)
 	}
 
 	hasTrailingSeparator := strings.HasSuffix(normalized, "/")

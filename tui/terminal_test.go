@@ -155,7 +155,8 @@ func countWrites(writes []string, target string) int {
 
 func TestNegotiationQueriesBeforeFallback(t *testing.T) {
 	h := setupNegotiation(t)
-	if (*h.writes)[0] != "\x1b[>7u\x1b[?u\x1b[c" {
+	// The OSC 7501 program status query shares the DA sentinel (503c60552).
+	if (*h.writes)[0] != "\x1b[>7u\x1b[?u\x1b]7501;?\x1b\\\x1b[c" {
 		t.Fatalf("query = %q", (*h.writes)[0])
 	}
 	if countWrites(*h.writes, "\x1b[>4;2m") != 0 {

@@ -645,10 +645,10 @@ func (e *Editor) Render(width int) []string {
 					firstGrapheme = afterGraphemes[0].segment
 				}
 				restAfter := after[len(firstGrapheme):]
-				cursor := "\x1b[7m" + firstGrapheme + "\x1b[0m"
+				cursor := RenderFakeCursor(firstGrapheme)
 				displayText = before + marker + cursor + restAfter
 			} else {
-				cursor := "\x1b[7m \x1b[0m"
+				cursor := RenderFakeCursor(" ")
 				displayText = before + marker + cursor
 				lineVisibleWidth++
 				if lineVisibleWidth > contentWidth && paddingX > 0 {

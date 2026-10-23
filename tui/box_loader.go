@@ -476,3 +476,13 @@ func (b *Box) getMouseLayout() *containerMouseLayout {
 	defer b.mouseMu.Unlock()
 	return b.mouseLayout
 }
+
+// SetPaddingX changes the horizontal padding and invalidates the cache
+// (setPaddingX).
+func (b *Box) SetPaddingX(padding int) {
+	if b.PaddingX == padding {
+		return
+	}
+	b.PaddingX = padding
+	b.invalidateCache()
+}

@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -113,6 +114,9 @@ type Terminal interface {
 	ClearScreen()
 	SetTitle(title string)
 	SetProgress(active bool)
+	// SetProgramStatus reports program status over OSC 7501 to terminals
+	// that support it; unsupported terminals ignore it.
+	SetProgramStatus(status ProgramStatus)
 }
 
 const (
@@ -147,11 +151,18 @@ type ProcessTerminal struct {
 	modifyOtherKeysActive  bool
 	keyboardProtocolPushed bool
 	negotiationBuffer      string
-	negotiationFlushTimer  *time.Timer
-	stdinBuffer            *StdinBuffer
-	progressInterval       *time.Timer
-	progressActive         bool
-	writeLogPath           string
+	// pendingDeviceAttributes counts owed DA replies; the last one answers
+	// the latest query, so a program status reply raced against the
+	// sentinel is attributed correctly.
+	pendingDeviceAttributes   int
+	programStatus             *ProgramStatus
+	programStatusSupported    bool
+	programStatusQueryPending bool
+	negotiationFlushTimer     *time.Timer
+	stdinBuffer               *StdinBuffer
+	progressInterval          *time.Timer
+	progressActive            bool
+	writeLogPath              string
 
 	stdinReaderStop chan struct{}
 	stdinReaderDone chan struct{}
@@ -271,8 +282,23 @@ func (t *ProcessTerminal) beginNegotiation() {
 	)
 
 	t.keyboardProtocolPushed = true
+	t.pendingDeviceAttributes++
 	t.clearNegotiationBufferLocked()
-	t.writeOut(kittyKeyboardProtocolQuery)
+	// The OSC 7501 program status query shares the DA sentinel: a terminal
+	// that supports it replies before DA. PI_PROGRAM_STATUS=1 or 0 skips
+	// the query.
+	override := os.Getenv("PI_PROGRAM_STATUS")
+	t.programStatusSupported = override == "1"
+	t.programStatusQueryPending = override != "1" && override != "0"
+	programStatusQuery := ""
+	if t.programStatusQueryPending {
+		programStatusQuery = ProgramStatusQuery
+	}
+	// kittyKeyboardProtocolQuery already ends with the DA sentinel; the
+	// program status query goes between the Kitty query and the sentinel.
+	kittyQuery := strings.TrimSuffix(kittyKeyboardProtocolQuery, "\x1b[c")
+	t.writeOut(kittyQuery + programStatusQuery + "\x1b[c")
+	t.writeProgramStatusLocked()
 }
 
 func (t *ProcessTerminal) readStdin() {
@@ -312,6 +338,15 @@ func (t *ProcessTerminal) readStdin() {
 // negotiation first, then forwarding to the input handler.
 func (t *ProcessTerminal) onSequence(sequence string) {
 	t.mu.Lock()
+	if IsProgramStatusReply(sequence) {
+		if t.programStatusQueryPending {
+			t.programStatusQueryPending = false
+			t.programStatusSupported = true
+			t.writeProgramStatusLocked()
+		}
+		t.mu.Unlock()
+		return
+	}
 	_, status := t.readNegotiationSequence(sequence)
 	if status == negotiationPending {
 		t.scheduleNegotiationFlush()
@@ -388,10 +423,40 @@ func (t *ProcessTerminal) handleNegotiationSequence(negotiation KeyboardProtocol
 		return negotiationHandled
 	}
 	// device-attributes: DA before a Kitty response means no Kitty support.
+	if t.pendingDeviceAttributes > 0 {
+		t.pendingDeviceAttributes--
+		// The last owed DA answers the latest query, which got no program
+		// status reply first; earlier DA replies belong to queries from
+		// before a restart.
+		if t.pendingDeviceAttributes == 0 {
+			t.programStatusQueryPending = false
+		}
+	}
 	if !t.kittyActive {
 		t.enableModifyOtherKeysLocked()
 	}
 	return negotiationHandled
+}
+
+// SetProgramStatus reports program status over OSC 7501; state "clear"
+// removes it.
+func (t *ProcessTerminal) SetProgramStatus(status ProgramStatus) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if status.State == "clear" {
+		t.programStatus = nil
+	} else {
+		t.programStatus = &status
+	}
+	if t.programStatusSupported {
+		t.writeOut(FormatProgramStatus(status))
+	}
+}
+
+func (t *ProcessTerminal) writeProgramStatusLocked() {
+	if t.programStatusSupported && t.programStatus != nil {
+		t.writeOut(FormatProgramStatus(*t.programStatus))
+	}
 }
 
 func (t *ProcessTerminal) setNegotiationBuffer(sequence string) {
@@ -510,6 +575,13 @@ func (t *ProcessTerminal) Stop() {
 		t.clearProgressIntervalLocked()
 		t.writeOut(terminalProgressClearSeq)
 	}
+	// Remove the status while stopped, for example after exit or while
+	// suspended; start() reports it again.
+	if t.programStatusSupported && t.programStatus != nil {
+		t.writeOut(FormatProgramStatus(ProgramStatus{State: "clear"}))
+	}
+	t.programStatusSupported = false
+	t.programStatusQueryPending = false
 
 	t.writeOut("\x1b[?2004l") // bracketed paste off
 

@@ -236,3 +236,33 @@ func TestTruncatedTextEmpty(t *testing.T) {
 		t.Fatalf("lines = %q", lines)
 	}
 }
+
+// Port of the fake-cursor resolution (1cedd3272): reverse video when
+// shown, dropped when the hardware cursor sits on it.
+func TestResolveFakeCursors(t *testing.T) {
+	base := &TuiBase{}
+	base.showHardwareCursor = false
+	lines := []string{
+		"plain line",
+		CURSOR_MARKER + RenderFakeCursor("x") + " rest",
+		RenderFakeCursor("y"),
+	}
+	resolved := base.resolveFakeCursors(lines)
+	if resolved[0] != "plain line" {
+		t.Fatalf("plain = %q", resolved[0])
+	}
+	if resolved[1] != CURSOR_MARKER+"\x1b[7mx\x1b[27m rest" {
+		t.Fatalf("focused = %q", resolved[1])
+	}
+	if resolved[2] != "\x1b[7my\x1b[27m" {
+		t.Fatalf("unfocused = %q", resolved[2])
+	}
+	base.showHardwareCursor = true
+	resolved = base.resolveFakeCursors(lines)
+	if resolved[1] != CURSOR_MARKER+"x rest" {
+		t.Fatalf("hardware focused = %q", resolved[1])
+	}
+	if resolved[2] != "\x1b[7my\x1b[27m" {
+		t.Fatalf("hardware unfocused = %q", resolved[2])
+	}
+}

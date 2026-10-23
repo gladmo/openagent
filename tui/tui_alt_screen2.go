@@ -1028,6 +1028,7 @@ func (s *TuiAltScreen) doRenderAlt() {
 	for i, line := range nextLayout.Lines {
 		screen[i] = osc133ZonePrefix.ReplaceAllString(line, "")
 	}
+	screen = s.resolveFakeCursors(screen)
 	screen = s.applySearchHighlights(screen, nextLayout)
 	screen = s.compositeScrollToEndIndicator(screen, nextLayout, width)
 	screen = s.CompositeOverlays(screen, width, height)

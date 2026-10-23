@@ -457,6 +457,7 @@ func (s *TuiAltScreen) afterTerminalStop(options *TuiStopOptions) {
 		} else {
 			documentLines = s.Container.Render(width)
 		}
+		documentLines = s.resolveFakeCursors(documentLines)
 		stripped := make([]string, len(documentLines))
 		for i, line := range documentLines {
 			stripped[i] = osc133ZonePrefix.ReplaceAllString(strings.ReplaceAll(line, CURSOR_MARKER, ""), "")
@@ -722,9 +723,9 @@ func (s *TuiAltScreen) handleViewportInput(data string) *viewportInputResult {
 			}
 			return &viewportInputResult{consume: true}
 		}
-		if s.shouldDeferViewportInputToOverlayLocked() {
-			return nil
-		}
+		// Unhandled wheel input scrolls the transcript even under a
+		// focused overlay; overlays wanting wheel input implement mouse
+		// handling.
 		s.routeWheelLocked(wheel)
 		return &viewportInputResult{consume: true}
 	}
@@ -1040,6 +1041,15 @@ func (s *TuiAltScreen) clearTextSelection() {
 	s.selectionInitialRange = nil
 	s.pressedUrl = ""
 	s.selectionDragged = false
+}
+
+// ResetTextSelection clears the selection so a transcript rebuild starts
+// from a clean selection state; a click is no longer pending.
+func (s *TuiAltScreen) ResetTextSelection() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clearTextSelection()
+	s.lastClick = nil
 }
 
 func (s *TuiAltScreen) handleMouseEventLocked(raw *sgrMouseEvent) {
