@@ -437,3 +437,65 @@ func stashEnv(names ...string) func() {
 		}
 	}
 }
+
+// Port of "should match shifted symbols by their produced character" and
+// the strict keyId grammar (7f9e1198f).
+func TestShiftedSymbolsMatchProducedCharacter(t *testing.T) {
+	SetKittyProtocolActive(true)
+	defer SetKittyProtocolActive(false)
+	if !MatchesKey("\x1b[61:43;2u", "+") {
+		t.Fatal("produced + not matched")
+	}
+	if !MatchesKey("\x1b[61:43;2u", "shift+=") {
+		t.Fatal("physical shift+= not matched")
+	}
+	if key, ok := ParseKey("\x1b[61:43;2u"); !ok || key != "+" {
+		t.Fatalf("parseKey = %q ok=%v", key, ok)
+	}
+	if !MatchesKey("\x1b[61:43;6u", "ctrl++") {
+		t.Fatal("ctrl++ not matched")
+	}
+	if key, ok := ParseKey("\x1b[61:43;6u"); !ok || key != "ctrl++" {
+		t.Fatalf("parseKey = %q ok=%v", key, ok)
+	}
+}
+
+func TestParseKeyIdGrammar(t *testing.T) {
+	if parseKeyId("+") == nil {
+		t.Fatal("bare + rejected")
+	}
+	if parseKeyId("ctrl++") == nil {
+		t.Fatal("ctrl++ rejected")
+	}
+	if parseKeyId("a+b") != nil {
+		t.Fatal("a+b accepted")
+	}
+	if parseKeyId("ctrl+shift+ctrl+a") != nil {
+		t.Fatal("duplicate modifier accepted")
+	}
+	if parseKeyId("ctrl+") != nil {
+		t.Fatal("dangling modifier accepted")
+	}
+	if parsed := parseKeyId("ctrl+shift+="); parsed == nil || parsed.key != "=" || !parsed.ctrl || !parsed.shift {
+		t.Fatalf("ctrl+shift+= = %+v", parsed)
+	}
+}
+
+// Port of "should match xterm modifyOtherKeys symbol combos" (7f9e1198f):
+// a Shift-produced symbol matches its logical spelling (ctrl++ from
+// ctrl+shift+=).
+func TestModifyOtherKeysShiftedSymbols(t *testing.T) {
+	SetKittyProtocolActive(false)
+	if !MatchesKey("\x1b[27;5;47~", "ctrl+/") {
+		t.Fatal("ctrl+/ not matched")
+	}
+	if key, ok := ParseKey("\x1b[27;5;47~"); !ok || key != "ctrl+/" {
+		t.Fatalf("parseKey = %q ok=%v", key, ok)
+	}
+	if !MatchesKey("\x1b[27;6;43~", "ctrl++") {
+		t.Fatal("ctrl++ not matched")
+	}
+	if key, ok := ParseKey("\x1b[27;6;43~"); !ok || key != "ctrl++" {
+		t.Fatalf("parseKey = %q ok=%v", key, ok)
+	}
+}
