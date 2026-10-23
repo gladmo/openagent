@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 )
@@ -322,4 +323,135 @@ func TestStdinBufferPaste(t *testing.T) {
 		t.Fatalf("pastes = %q", pastes)
 	}
 	assertSequences(t, seqs, "b", "e", "f", "o", "r", "e", "a", "f", "t", "e", "r")
+}
+
+// Port of the Terminal Reply Strings block (edb2eb966): replies stay
+// intact across every delayed split, ambiguous introducers recover as Alt
+// keys, and a header assembled within the timeout is recognized.
+func TestStdinBufferTerminalRepliesStayIntact(t *testing.T) {
+	replies := []string{
+		"\x1b]4;1;rgb:eaea/6c6c/6d6d\x07",
+		"\x1b]10;rgb:ffff/ffff/ffff\x1b\\",
+		"\x1b]11;rgb:0000/0000/0000\x07",
+		"\x1bP>|Ghostty 1.3.1\x1b\\",
+		"\x1b_Gi=1;OK\x1b\\",
+		"\x1b]7501;?\x1b\\",
+	}
+	headers := map[string]int{
+		"\x1b]4;1;": 6, "\x1b]10;": 5, "\x1b]11;": 5,
+		"\x1bP>|": 4, "\x1b_Gi=1;": 7, "\x1b]7501;?": 8,
+	}
+	for _, reply := range replies {
+		headerLen := 0
+		for header, size := range headers {
+			if strings.HasPrefix(reply, header) {
+				headerLen = size
+			}
+		}
+		for split := headerLen; split < len(reply); split++ {
+			buf, clock, sequences := newManualBuffer(50, 10)
+			buf.Process([]byte(reply[:split]))
+			for clock.fireFirst() {
+			}
+			buf.Process([]byte(reply[split:] + "x"))
+			for clock.fireFirst() {
+			}
+			want := []string{reply, "x"}
+			if len(*sequences) != 2 || (*sequences)[0] != reply || (*sequences)[1] != "x" {
+				t.Fatalf("split %d of %q: sequences = %q, want %q", split, reply, *sequences, want)
+			}
+		}
+	}
+}
+
+func TestStdinBufferReplyAcrossExpiredTimeouts(t *testing.T) {
+	buf, clock, sequences := newManualBuffer(50, 10)
+	buf.Process([]byte("\x1b]4;1;rgb:eaea/6c"))
+	for clock.fireFirst() {
+	}
+	buf.Process([]byte("6c/6d6d"))
+	for clock.fireFirst() {
+	}
+	if len(*sequences) != 0 {
+		t.Fatalf("premature sequences = %q", *sequences)
+	}
+	buf.Process([]byte("\x07"))
+	assertSequences(t, sequences, "\x1b]4;1;rgb:eaea/6c6c/6d6d\x07")
+}
+
+func TestStdinBufferBareIntroducersStillTimeOut(t *testing.T) {
+	buf, clock, sequences := newManualBuffer(50, 10)
+	for _, prefix := range []string{"\x1b]", "\x1bP", "\x1b_"} {
+		buf.Process([]byte(prefix))
+		clock.fireFirst()
+	}
+	assertSequences(t, sequences, "\x1b]", "\x1bP", "\x1b_")
+}
+
+func TestStdinBufferAmbiguousLegacyAltRecovery(t *testing.T) {
+	ambiguous := []string{
+		"\x1b]a", "\x1b]1", "\x1b]10", "\x1b]0;title", "\x1b]4;", "\x1b]4;a;",
+		"\x1bPa", "\x1bP>", "\x1b_a", "\x1b_G", "\x1b_Gi=1",
+	}
+	for _, prefix := range ambiguous {
+		buf, clock, sequences := newManualBuffer(50, 10)
+		runes := []rune(prefix)
+		buf.Process([]byte(prefix))
+		// 20ms elapses without reaching the 50ms sequence timeout.
+		buf.Process([]byte("x\r\x03\x04"))
+		if len(*sequences) != 0 {
+			t.Fatalf("%q flushed early: %q", prefix, *sequences)
+		}
+		// The sequence timeout (50ms) elapses; the flushed control string
+		// recovers its Alt key and reparses the tail.
+		clock.fireFirst()
+		prefixStr := string(runes)
+		want := []string{prefixStr[:2]}
+		for _, r := range prefixStr[2:] {
+			want = append(want, string(r))
+		}
+		want = append(want, "x", "\r", "\x03", "\x04")
+		if len(*sequences) != len(want) {
+			t.Fatalf("%q sequences = %q, want %q", prefix, *sequences, want)
+		}
+		for i := range want {
+			if (*sequences)[i] != want[i] {
+				t.Fatalf("%q sequences = %q, want %q", prefix, *sequences, want)
+			}
+		}
+	}
+}
+
+func TestStdinBufferReplyHeaderAssembledInTimeout(t *testing.T) {
+	buf, _, sequences := newManualBuffer(50, 10)
+	buf.Process([]byte("\x1b]1"))
+	// 5ms elapses: still inside the 50ms sequence timeout, so the partial
+	// header stays buffered; the assembled header matches the reply
+	// pattern, so even an expired timeout keeps it buffered.
+	buf.Process([]byte("0;"))
+	// The assembled header matches the reply pattern, so no timer is
+	// pending and even an expired timeout keeps the buffer intact.
+	if len(*sequences) != 0 {
+		t.Fatalf("assembled header flushed: %q", *sequences)
+	}
+	buf.Process([]byte("rgb:1111/1111/1111\x1b\\"))
+	assertSequences(t, sequences, "\x1b]10;rgb:1111/1111/1111\x1b\\")
+}
+
+func TestStdinBufferUnterminatedReplyRecovery(t *testing.T) {
+	// A new escape sequence aborts an unterminated reply; the trailing ESC
+	// stays buffered until it can be distinguished from ST.
+	buf, _, sequences := newManualBuffer(50, 10)
+	buf.Process([]byte("\x1b]4;1;rgb:eaea/6c"))
+	buf.Process([]byte("\x1b"))
+	buf.Process([]byte("[Ahello"))
+	assertSequences(t, sequences, "\x1b[A", "h", "e", "l", "l", "o")
+}
+
+func TestStdinBufferCanceledReplyDiscarded(t *testing.T) {
+	for _, cancel := range []string{"\x18", "\x1a"} {
+		buf, _, sequences := newManualBuffer(50, 10)
+		buf.Process([]byte("\x1b]11;rgb:0000" + cancel + "x"))
+		assertSequences(t, sequences, "x")
+	}
 }

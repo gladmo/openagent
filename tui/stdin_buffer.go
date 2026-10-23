@@ -177,6 +177,15 @@ type extractCompleteSequencesResult struct {
 	remainder []rune
 }
 
+// terminalReplyHeaderPattern recognizes color and program-status OSC
+// replies, XTVersion, and Kitty graphics replies. Until their header is
+// complete, the input may be batched legacy Alt keystrokes.
+var terminalReplyHeaderPattern = regexp.MustCompile(`^\x1b(?:\](?:1[01];|4;\d{1,3};|7501;\?)|P>\||_G(?:[a-z]=\d+,)*[a-z]=\d+;)`)
+
+func isControlStringRunes(data []rune) bool {
+	return len(data) >= 2 && data[0] == escRune && (data[1] == ']' || data[1] == 'P' || data[1] == '_')
+}
+
 func extractCompleteSequences(buffer []rune) extractCompleteSequencesResult {
 	var sequences []string
 	pos := 0
@@ -185,9 +194,28 @@ func extractCompleteSequences(buffer []rune) extractCompleteSequencesResult {
 		remaining := buffer[pos:]
 
 		if remaining[0] == escRune {
+			terminalReply := isControlStringRunes(remaining) && terminalReplyHeaderPattern.MatchString(string(remaining))
 			seqEnd := 1
 			emitted := false
 			for seqEnd <= len(remaining) {
+				if terminalReply && seqEnd > 2 {
+					char := remaining[seqEnd-1]
+					if char == '\x18' || char == '\x1a' {
+						// CAN and SUB cancel the string, not subsequent
+						// keyboard input.
+						pos += seqEnd
+						emitted = true
+						break
+					}
+					if char == escRune && seqEnd < len(remaining) && remaining[seqEnd] != '\\' {
+						// A new escape sequence aborts an unterminated
+						// reply. Keep a trailing ESC buffered until we can
+						// distinguish it from ST.
+						pos += seqEnd - 1
+						emitted = true
+						break
+					}
+				}
 				candidate := remaining[:seqEnd]
 				status := isCompleteSequence(candidate)
 
@@ -376,6 +404,14 @@ func (b *StdinBuffer) processLocked(data []byte) (dataSequences []string, pasteC
 	b.buffer = append([]rune(nil), result.remainder...)
 
 	if len(b.buffer) > 0 {
+		// Only a recognizable reply header establishes a delimited string.
+		// Flushing it would turn a delayed tail into text and an OSC's BEL
+		// terminator into Ctrl+G (the external editor shortcut). Other
+		// input, including Alt+] followed by text, must retain bounded
+		// recovery.
+		if terminalReplyHeaderPattern.MatchString(string(b.buffer)) {
+			return result.sequences, nil, nil
+		}
 		timeoutMs := b.timeoutMs
 		if len(b.buffer) == 1 && b.buffer[0] == escRune {
 			timeoutMs = b.escapeTimeMs
@@ -385,7 +421,16 @@ func (b *StdinBuffer) processLocked(data []byte) (dataSequences []string, pasteC
 			flushed := b.flushLocked()
 			b.mu.Unlock()
 			for _, sequence := range flushed {
-				b.emitDataSequence(sequence)
+				runes := []rune(sequence)
+				if len(runes) > 2 && isControlStringRunes(runes) {
+					// Recover the Alt key and reparse its tail so batched
+					// text, Enter, and control keys are not swallowed as
+					// one event.
+					b.emitDataSequence(string(runes[:2]))
+					b.Process([]byte(string(runes[2:])))
+				} else {
+					b.emitDataSequence(sequence)
+				}
 			}
 		})
 	}
