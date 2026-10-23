@@ -69,6 +69,9 @@ type ToolDefinition struct {
 	// PromptSnippet is a one-line note for the Available-tools section of the
 	// default system prompt.
 	PromptSnippet string
+	// DefaultActive is false when the tool activates only on explicit
+	// selection, never on registration (nil = active on registration).
+	DefaultActive *bool
 	// PromptGuidelines are bullets appended to the default guidelines.
 	PromptGuidelines []string
 	// Parameters is the TypeBox parameter schema.

@@ -40,6 +40,10 @@ type BuildSystemPromptOptions struct {
 	ContextFiles []ContextFile
 	// Skills are pre-loaded skills.
 	Skills []Skill
+	// HiddenTools are selected tools whose declarations requests leave out;
+	// they are reachable only through another tool, so the tool list and
+	// rules leave them out too.
+	HiddenTools []string
 }
 
 // ContextFile is one pre-loaded project instruction file.
@@ -59,6 +63,10 @@ type NormalizedBuildSystemPromptOptions struct {
 	Sections           map[string]string
 	ContextFiles       []ContextFile
 	Skills             []Skill
+	// HiddenTools are selected tools whose declarations requests leave out
+	// (prepareLoadout hidden declarations). They are reachable only through
+	// another tool, so the tool list and rules leave them out too.
+	HiddenTools []string
 }
 
 // SystemPromptSections are the ordered, replaceable prompt sections;
@@ -89,6 +97,7 @@ func NormalizeBuildSystemPromptOptions(input BuildSystemPromptOptions) Normalize
 	}
 	contextFiles := append([]ContextFile(nil), input.ContextFiles...)
 	skills := append([]Skill(nil), input.Skills...)
+	hiddenTools := append([]string(nil), input.HiddenTools...)
 	return NormalizedBuildSystemPromptOptions{
 		BuildSystemPromptOptions: input,
 		SelectedTools:            selectedTools,
@@ -99,6 +108,7 @@ func NormalizeBuildSystemPromptOptions(input BuildSystemPromptOptions) Normalize
 		Sections:                 sections,
 		ContextFiles:             contextFiles,
 		Skills:                   skills,
+		HiddenTools:              hiddenTools,
 	}
 }
 
@@ -184,10 +194,18 @@ func FormatSkillsForPrompt(skills []Skill, fileReadTool string) string {
 	}
 	for _, name := range names {
 		skill := byName[name]
-		if skill.Description != "" {
-			lines = append(lines, fmt.Sprintf("- %s: %s (use the %s tool to read it)", name, skill.Description, fileReadTool))
+		// "indirect" names no tool: the reader is reachable only through
+		// another tool.
+		reader := ""
+		if fileReadTool == "indirect" {
+			reader = "Load a skill's file when the task matches its description."
 		} else {
-			lines = append(lines, fmt.Sprintf("- %s (use the %s tool to read it)", name, fileReadTool))
+			reader = fmt.Sprintf("use the %s tool to read it", fileReadTool)
+		}
+		if skill.Description != "" {
+			lines = append(lines, fmt.Sprintf("- %s: %s (%s)", name, skill.Description, reader))
+		} else {
+			lines = append(lines, fmt.Sprintf("- %s (%s)", name, reader))
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -209,8 +227,14 @@ func BuildSystemPromptSections(input BuildSystemPromptOptions) (SystemPromptSect
 	} else {
 		promptSections["preamble"] = "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files."
 
-		var visibleTools []string
+		declaredTools := make([]string, 0, len(options.SelectedTools))
 		for _, name := range options.SelectedTools {
+			if !containsStringIn(options.HiddenTools, name) {
+				declaredTools = append(declaredTools, name)
+			}
+		}
+		var visibleTools []string
+		for _, name := range declaredTools {
 			if snippet := options.ToolSnippets[name]; snippet != "" {
 				visibleTools = append(visibleTools, name)
 			}
@@ -224,7 +248,7 @@ func BuildSystemPromptSections(input BuildSystemPromptOptions) (SystemPromptSect
 			tools = strings.Join(lines, "\n")
 		}
 		promptSections["tools"] = tools + "\n\nIn addition to the tools above, you may have access to other custom tools depending on the project."
-		promptSections["rules"] = buildRules(options.SelectedTools, options.ToolGuidelines, options.PromptGuidelines)
+		promptSections["rules"] = buildRules(declaredToolsForRules(options), options.ToolGuidelines, options.PromptGuidelines)
 		promptSections["docs"] = fmt.Sprintf(`Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
 - Main documentation: %s
 - Additional docs: %s
@@ -241,17 +265,26 @@ func BuildSystemPromptSections(input BuildSystemPromptOptions) (SystemPromptSect
 	if len(options.ContextFiles) > 0 {
 		promptSections["project_context"] = renderProjectContext(options.ContextFiles)
 	}
+	// A hidden reader is still reachable through another tool, so skills
+	// stay but the hint names no tool.
 	skillFileReadTool := ""
+	readerSelected := false
 	for _, tool := range []string{"read", "bash"} {
 		for _, selected := range options.SelectedTools {
 			if selected == tool {
-				skillFileReadTool = tool
+				readerSelected = true
+				if !containsStringIn(options.HiddenTools, tool) {
+					skillFileReadTool = tool
+				}
 				break
 			}
 		}
 		if skillFileReadTool != "" {
 			break
 		}
+	}
+	if skillFileReadTool == "" && readerSelected {
+		skillFileReadTool = "indirect"
 	}
 	if skillFileReadTool != "" && len(options.Skills) > 0 {
 		skillsPrompt := strings.TrimSpace(FormatSkillsForPrompt(options.Skills, skillFileReadTool))
@@ -328,4 +361,23 @@ func DiffSystemPromptSections(previous map[string]*string, current SystemPromptS
 		return nil
 	}
 	return patch
+}
+
+func containsStringIn(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func declaredToolsForRules(options NormalizedBuildSystemPromptOptions) []string {
+	declared := make([]string, 0, len(options.SelectedTools))
+	for _, name := range options.SelectedTools {
+		if !containsStringIn(options.HiddenTools, name) {
+			declared = append(declared, name)
+		}
+	}
+	return declared
 }

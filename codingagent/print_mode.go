@@ -207,6 +207,10 @@ func RunPrintMode(host PrintModeHost, options PrintModeOptions, guard *OutputGua
 							_ = guard.WriteRawStdout(text.Text + "\n")
 						}
 					}
+					if assistant.StopReason == "length" {
+						_ = guard.WriteRawStderr("Response was truncated: the model reached its output token limit.\n")
+						exitCode = 1
+					}
 				}
 			}
 		}

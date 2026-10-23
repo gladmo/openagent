@@ -299,7 +299,30 @@ func (s *AgentSession) restoreToolsFromTranscript() {
 			names = append(names, name)
 		}
 	}
+	// Extension tools the branch never mentioned were registered after it
+	// recorded its loadout, so they are activated like newly registered
+	// tools (declarable and not defaultActive=false). Built-in tools follow
+	// the default loadout instead.
+	builtinNames := map[string]bool{}
+	for _, name := range s.builtinToolNames() {
+		builtinNames[name] = true
+	}
+	for _, definition := range s.customTools {
+		name := definition.Name
+		if _, mentioned := declared[name]; mentioned || builtinNames[name] {
+			continue
+		}
+		if definition.DefaultActive != nil && !*definition.DefaultActive {
+			continue
+		}
+		names = append(names, name)
+	}
 	s.SetActiveToolsByName(names)
+}
+
+// builtinToolNames lists the built-in tool set in registration order.
+func (s *AgentSession) builtinToolNames() []string {
+	return []string{"read", "bash", "powershell", "edit", "write", "grep", "find", "ls"}
 }
 
 // registerToolDefinition adds one definition to the registry.

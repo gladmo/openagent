@@ -68,16 +68,39 @@ type McpOutputSaver func(data []byte, extension string) (string, error)
 // SaveToTempFile writes oversized MCP output to a private temp file and
 // returns its path.
 func SaveToTempFile(data []byte, extension string) (string, error) {
+	return WriteOutputFile("pi-mcp", extension, data)
+}
+
+// WriteOutputFile writes data to a new output file and returns its path.
+// Output files carry what the model was not shown in full — truncated tool
+// output, binary MCP resources, images — and can hold private data, so
+// only the user may read them and the path is created exclusively (a
+// pre-placed symlink is never followed).
+func WriteOutputFile(prefix, extension string, data []byte) (string, error) {
+	file, err := createOutputFile(prefix, extension)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	if _, err := file.Write(data); err != nil {
+		return "", err
+	}
+	return file.Name(), nil
+}
+
+// createOutputFile opens a new, unused output file: <tmpdir>/<prefix>-<hex><extension>.
+func createOutputFile(prefix, extension string) (*os.File, error) {
 	suffix := make([]byte, 8)
 	if _, err := rand.Read(suffix); err != nil {
-		return "", err
+		return nil, err
 	}
-	path := filepath.Join(os.TempDir(), fmt.Sprintf("pi-mcp-%s%s", hex.EncodeToString(suffix), extension))
-	// Results can carry private data, so only the user may read the file.
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return "", err
-	}
-	return path, nil
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("%s-%s%s", prefix, hex.EncodeToString(suffix), extension))
+	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+}
+
+// CreateOutputFileStream opens a new output file for streamed output.
+func CreateOutputFileStream(prefix, extension string) (*os.File, error) {
+	return createOutputFile(prefix, extension)
 }
 
 // CreateMcpToolName builds mcp__<server>__<tool>, sanitized and

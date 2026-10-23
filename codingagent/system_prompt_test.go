@@ -203,3 +203,59 @@ func TestDiffSystemPromptSections(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// Port of the hidden-tools prompt behavior (c30840c2e): hidden tools stay
+// out of the tool list and rules; a hidden reader keeps skills with no
+// named tool.
+func TestSystemPromptHidesHiddenTools(t *testing.T) {
+	sections, err := BuildSystemPromptSections(BuildSystemPromptOptions{
+		SelectedTools: []string{"read", "bash", "secret_tool"},
+		HiddenTools:   []string{"secret_tool"},
+		ToolSnippets: map[string]string{
+			"read": "reads files", "bash": "runs commands", "secret_tool": "internal",
+		},
+		ToolGuidelines: map[string][]string{"secret_tool": {"never mention this"}},
+		Cwd:            "/x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := strings.Join(mapValues(sections), "\n")
+	if strings.Contains(prompt, "secret_tool") {
+		t.Fatalf("hidden tool leaked: %q", prompt)
+	}
+	if !strings.Contains(prompt, "reads files") || !strings.Contains(prompt, "runs commands") {
+		t.Fatalf("declared tools missing: %q", prompt)
+	}
+}
+
+func TestSystemPromptSkillsHintIndirect(t *testing.T) {
+	sections, err := BuildSystemPromptSections(BuildSystemPromptOptions{
+		SelectedTools: []string{"bash"},
+		HiddenTools:   []string{"bash"},
+		ToolSnippets:  map[string]string{"bash": "runs commands"},
+		Skills:        []Skill{{Name: "research", Description: "does research"}},
+		Cwd:           "/x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := strings.Join(mapValues(sections), "\n")
+	if !strings.Contains(prompt, "research") {
+		t.Fatalf("skills dropped: %q", prompt)
+	}
+	if strings.Contains(prompt, "use the bash tool") {
+		t.Fatalf("hidden reader named: %q", prompt)
+	}
+	if !strings.Contains(prompt, "Load a skill's file when the task matches") {
+		t.Fatalf("indirect hint missing: %q", prompt)
+	}
+}
+
+func mapValues(sections SystemPromptSections) []string {
+	values := make([]string, 0, len(sections))
+	for _, value := range sections {
+		values = append(values, value)
+	}
+	return values
+}

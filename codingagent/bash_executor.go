@@ -6,7 +6,6 @@ package codingagent
 
 import (
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -67,12 +66,11 @@ func ExecuteBashWithOperations(command, cwd string, operations BashOperations, o
 		if tempFilePath != "" {
 			return
 		}
-		path := filepath.Join(os.TempDir(), "pi-bash-"+randomHex(4)+".log")
-		file, err := os.Create(path)
+		file, err := CreateOutputFileStream("pi-bash", ".log")
 		if err != nil {
 			return
 		}
-		tempFilePath = path
+		tempFilePath = file.Name()
 		tempFile = file
 		for _, chunk := range outputChunks {
 			_, _ = file.WriteString(chunk)

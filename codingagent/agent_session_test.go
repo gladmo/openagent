@@ -10,7 +10,9 @@ import (
 
 	"github.com/gladmo/openagent/agent"
 	"github.com/gladmo/openagent/ai"
-)
+
+
+	"github.com/gladmo/openagent/typebox")
 
 func newTestSession(t *testing.T) *AgentSession {
 	t.Helper()
@@ -463,4 +465,63 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// Port of bd3c9b823: extension tools registered after the branch recorded
+// its loadout are activated on resume; built-ins follow the transcript.
+func TestAgentSessionActivatesLateRegisteredTools(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(EnvAgentDirName(), dir)
+
+	manager, err := SessionManagerCreate(dir, "", nil)
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	manager.AppendMessage(&ai.SystemMessage{ToolsAdded: []ai.Tool{{Name: "read"}}})
+
+	lateTool := &ToolDefinition{
+		Name:        "late_extension_tool",
+		Description: "registered after the loadout",
+		Parameters:  typebox.Object(nil),
+	}
+	session := NewAgentSession(AgentSessionRuntimeOptions{
+		Config: AgentSessionConfig{
+			Agent:           agent.NewAgent(agent.AgentOptions{}),
+			SessionManager:  manager,
+			SettingsManager: SettingsManagerInMemory(Settings{}, nil),
+			Cwd:             dir,
+			CustomTools:     []*ToolDefinition{lateTool},
+		},
+	})
+	active := session.GetActiveToolNames()
+	foundRead, foundLate := false, false
+	for _, name := range active {
+		if name == "read" {
+			foundRead = true
+		}
+		if name == "late_extension_tool" {
+			foundLate = true
+		}
+	}
+	if !foundRead || !foundLate {
+		t.Fatalf("active = %v", active)
+	}
+	// defaultActive=false tools stay inactive.
+	inactive := &ToolDefinition{Name: "inactive_tool", Parameters: typebox.Object(nil)}
+	off := false
+	inactive.DefaultActive = &off
+	session2 := NewAgentSession(AgentSessionRuntimeOptions{
+		Config: AgentSessionConfig{
+			Agent:           agent.NewAgent(agent.AgentOptions{}),
+			SessionManager:  manager,
+			SettingsManager: SettingsManagerInMemory(Settings{}, nil),
+			Cwd:             dir,
+			CustomTools:     []*ToolDefinition{inactive},
+		},
+	})
+	for _, name := range session2.GetActiveToolNames() {
+		if name == "inactive_tool" {
+			t.Fatal("defaultActive=false tool activated")
+		}
+	}
 }

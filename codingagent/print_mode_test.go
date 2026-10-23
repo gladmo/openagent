@@ -11,6 +11,9 @@ import (
 
 	"github.com/gladmo/openagent/agent"
 	"github.com/gladmo/openagent/ai"
+
+	"os"
+	"time"
 )
 
 type stubPrintHost struct {
@@ -212,4 +215,35 @@ func (b *syncBuffer) String() string {
 // setAgentMessages replaces the agent transcript for assertions.
 func setAgentMessages(a *agent.Agent, messages ...agent.AgentMessage) {
 	a.SetMessages(messages)
+}
+
+// Port of 441f5767c: a length-truncated response warns and exits 1.
+func TestPrintModeWarnsOnTruncatedResponse(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(EnvAgentDirName(), dir)
+	host, err := SetupPrintSession(PrintSessionOptions{Cwd: dir, Mode: string(ModeText)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := host.Session()
+	session.Agent.StreamFunction = func(*ai.Model, *ai.TranscriptContext, *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		stream := ai.NewAssistantMessageEventStream()
+		message := &ai.AssistantMessage{
+			Content: []ai.ContentBlock{ai.TextContent{Text: "partial"}}, StopReason: ai.StopLength,
+			TimestampMs: float64(time.Now().UnixMilli()),
+		}
+		go func() {
+			stream.Push(&ai.EventDone{Reason: ai.StopLength, Message: message})
+		}()
+		return stream
+	}
+	session.Agent.Prompt(&ai.UserMessage{Content: ai.StringContent("go"), TimestampMs: float64(time.Now().UnixMilli())})
+	var stderr bytes.Buffer
+	code := RunPrintMode(host, PrintModeOptions{}, NewOutputGuard(os.Stdout, &stderr))
+	if code != 1 {
+		t.Fatalf("exit = %d", code)
+	}
+	if !strings.Contains(stderr.String(), "Response was truncated") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
 }
