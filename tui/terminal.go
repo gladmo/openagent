@@ -423,14 +423,17 @@ func (t *ProcessTerminal) handleNegotiationSequence(negotiation KeyboardProtocol
 		return negotiationHandled
 	}
 	// device-attributes: DA before a Kitty response means no Kitty support.
-	if t.pendingDeviceAttributes > 0 {
-		t.pendingDeviceAttributes--
-		// The last owed DA answers the latest query, which got no program
-		// status reply first; earlier DA replies belong to queries from
-		// before a restart.
-		if t.pendingDeviceAttributes == 0 {
-			t.programStatusQueryPending = false
-		}
+	// A DA no query owes is forwarded to the input handler, matching the
+	// reference's return false.
+	if t.pendingDeviceAttributes == 0 {
+		return negotiationNone
+	}
+	t.pendingDeviceAttributes--
+	// The last owed DA answers the latest query, which got no program
+	// status reply first; earlier DA replies belong to queries from
+	// before a restart.
+	if t.pendingDeviceAttributes == 0 {
+		t.programStatusQueryPending = false
 	}
 	if !t.kittyActive {
 		t.enableModifyOtherKeysLocked()

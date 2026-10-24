@@ -621,9 +621,18 @@ func (t *TuiBase) disposeExitRestore() {
 }
 
 func (t *TuiBase) restoreTerminalForExit() {
+	// The override hook lets embedding screens (TuiAltScreen) contribute
+	// their mode resets; it is set while t.mu is held and only read here,
+	// so it needs no extra locking. The caller of this function may be a
+	// signal handler racing anything, so the hook must not lock.
 	t.mu.Lock()
 	stopped := t.stoppedFlag
-	prefix, suffix := t.ExitRestorePrefix(), t.ExitRestoreSuffix()
+	var prefix, suffix string
+	if t.exitRestoreOverride != nil {
+		prefix, suffix = t.exitRestoreOverride()
+	} else {
+		prefix, suffix = t.ExitRestorePrefix(), t.ExitRestoreSuffix()
+	}
 	t.mu.Unlock()
 	if stopped {
 		return
@@ -633,6 +642,15 @@ func (t *TuiBase) restoreTerminalForExit() {
 	}); ok {
 		restorer.RestoreOnExit(prefix, suffix)
 	}
+}
+
+// SetExitRestoreOverride installs the embedding screen's exit-restore
+// sequences, computed without locking (the restore path may hold t.mu).
+// Pass nil to restore the TuiBase defaults.
+func (t *TuiBase) SetExitRestoreOverride(override func() (string, string)) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.exitRestoreOverride = override
 }
 
 // Start begins terminal input and the first render.

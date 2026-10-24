@@ -381,17 +381,30 @@ func (s *inMemoryTelemetryState) startInMemorySpan(
 ) (result any, err error) {
 	if parent != nil && parent.span != nil {
 		s.mu.Lock()
-		parentSettled := parent.span.settled
-		s.mu.Unlock()
-		if parentSettled {
+		if parent.span.settled {
+			s.mu.Unlock()
 			return s.startInertSpan(options, callback)
 		}
+		// Check and record atomically: a parent settling after this point
+		// still gets a recorded child, matching the TS single-threaded
+		// check-then-create.
+		recordedSpan := s.createSpan(parent, options)
+		s.spans = append(s.spans, recordedSpan)
+		s.mu.Unlock()
+		return s.runRecordedSpan(recordedSpan, callback)
 	}
 	s.mu.Lock()
 	recordedSpan := s.createSpan(parent, options)
 	s.spans = append(s.spans, recordedSpan)
 	s.mu.Unlock()
+	return s.runRecordedSpan(recordedSpan, callback)
+}
 
+// runRecordedSpan runs the callback over a recorded span and settles it.
+func (s *inMemoryTelemetryState) runRecordedSpan(
+	recordedSpan *mutableRecordedTelemetrySpan,
+	callback func(TelemetrySpan) (any, error),
+) (result any, err error) {
 	span := &inMemorySpan{state: s, span: recordedSpan}
 	s.mu.Lock()
 	s.carriers[span] = copyCarrier(recordedSpan.context)
@@ -661,7 +674,7 @@ func (c *InMemoryTelemetryContext) GetTrace(traceID string) (StoredTrace, bool) 
 // FindTraces returns one page of stored traces, newest first.
 func (c *InMemoryTelemetryContext) FindTraces(query TraceQuery) FindTracesResult {
 	limit := query.Limit
-	if limit == 0 {
+	if limit <= 0 {
 		limit = 20
 	}
 	var afterMs float64

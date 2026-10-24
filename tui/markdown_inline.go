@@ -239,7 +239,8 @@ func mdMatchStrictDel(src string) (string, int) {
 			if i+2 < len(runes) && runes[i+2] == '~' {
 				return "", 0
 			}
-			return string(content), 2 + i + 2
+			// Width in bytes: callers slice the source by bytes.
+			return string(content), 2 + len(string(content)) + 2
 		}
 		content = append(content, runes[i])
 		i++
@@ -546,19 +547,25 @@ func mdMatchLink(src string) (linkText, href string, width int, ok bool) {
 	return linkText, href, width, true
 }
 
-// mdLiteralRejectedStrong reports a **...** run whose closer failed
-// flanking: marked keeps the entire run literal instead of letting em
-// rematch a subset of the delimiters.
+// mdLiteralRejectedStrong reports a **...** or __...__ run whose closer
+// failed flanking: marked keeps the entire run literal instead of letting
+// em rematch a subset of the delimiters.
 func mdLiteralRejectedStrong(src string) (string, int) {
-	if !strings.HasPrefix(src, "**") {
+	markerLen := 0
+	if strings.HasPrefix(src, "**") {
+		markerLen = 2
+	} else if strings.HasPrefix(src, "__") {
+		markerLen = 2
+	} else {
 		return "", 0
 	}
-	closing := strings.Index(src[2:], "**")
+	marker := src[:markerLen]
+	closing := strings.Index(src[markerLen:], marker)
 	if closing < 0 {
 		return "", 0
 	}
-	content := src[2 : 2+closing]
-	after := src[2+closing+2:]
+	content := src[markerLen : markerLen+closing]
+	after := src[markerLen+closing+markerLen:]
 	if len(content) == 0 || len(after) == 0 {
 		return "", 0
 	}
@@ -567,6 +574,6 @@ func mdLiteralRejectedStrong(src string) (string, int) {
 	if !mdIsWordRune([]rune(after)[0]) || !mdIsPunctRune(last) || CjkPunctuationRune(last) {
 		return "", 0
 	}
-	width := 2 + closing + 2
+	width := markerLen + closing + markerLen
 	return src[:width], width
 }

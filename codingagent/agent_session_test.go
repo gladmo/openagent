@@ -525,3 +525,26 @@ func TestAgentSessionActivatesLateRegisteredTools(t *testing.T) {
 		}
 	}
 }
+
+// --tools patterns match tool names through the session allowlist
+// (04b97ef00): '*grep*' keeps grep (and any name containing it).
+func TestAgentSessionToolPatternsMatch(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(EnvAgentDirName(), dir)
+	session := NewAgentSession(AgentSessionRuntimeOptions{
+		Config: AgentSessionConfig{
+			Agent:            agent.NewAgent(agent.AgentOptions{}),
+			SessionManager:   nil,
+			SettingsManager:  SettingsManagerInMemory(Settings{}, nil),
+			Cwd:              dir,
+			AllowedToolNames: []string{"*grep*"},
+		},
+	})
+	// Only the matching built-in is registered.
+	if len(session.toolRegistry) != 1 {
+		t.Fatalf("registry = %v", session.toolRegistry)
+	}
+	if _, ok := session.toolRegistry["grep"]; !ok {
+		t.Fatalf("registry = %v", session.toolRegistry)
+	}
+}

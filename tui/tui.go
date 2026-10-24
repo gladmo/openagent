@@ -601,6 +601,9 @@ type TuiBase struct {
 	// exitRestoreSignals carries fatal signals to the last-resort
 	// terminal restore (see TuiBase.installExitRestore).
 	exitRestoreSignals chan os.Signal
+	// exitRestoreOverride is the embedding screen's exit-restore sequences,
+	// set under mu and read by the restore path (which may hold mu).
+	exitRestoreOverride func() (string, string)
 
 	pendingOscColorReplies       map[int]int
 	pendingOscColorQueries       map[int][]*pendingOscColorQuery

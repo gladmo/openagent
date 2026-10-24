@@ -202,7 +202,7 @@ type McpServerConnection struct {
 	instructions string
 	challenge    *mcp.OAuthChallenge
 	client       *mcp.McpClient
-	opening      chan mcpOpenResult
+	opening      *mcpOpenWaiter
 	// shutdown is aborted by Close; it cancels a connect in progress,
 	// including the wait between retries.
 	shutdown   *abort.Controller
@@ -219,6 +219,26 @@ type McpServerConnection struct {
 type mcpOpenResult struct {
 	client *mcp.McpClient
 	err    error
+}
+
+// mcpOpenWaiter shares one open() outcome with every waiter: the opener
+// stores the result and closes done once; any number of GetClient callers,
+// Reconnect, SignOut, and Close observe the same outcome (the reference
+// shares one promise).
+type mcpOpenWaiter struct {
+	done   chan struct{}
+	client *mcp.McpClient
+	err    error
+}
+
+func (w *mcpOpenWaiter) wait() (*mcp.McpClient, error) {
+	<-w.done
+	return w.client, w.err
+}
+
+func (w *mcpOpenWaiter) resolve(client *mcp.McpClient, err error) {
+	w.client, w.err = client, err
+	close(w.done)
 }
 
 // NewMcpServerConnection prepares one server's connection.
@@ -393,17 +413,16 @@ func (c *McpServerConnection) GetClient() (*mcp.McpClient, error) {
 	if c.opening != nil {
 		opening := c.opening
 		c.mu.Unlock()
-		result := <-opening
-		return result.client, result.err
+		return opening.wait()
 	}
-	opening := make(chan mcpOpenResult, 1)
+	opening := &mcpOpenWaiter{done: make(chan struct{})}
 	c.opening = opening
 	c.mu.Unlock()
 	client, err := c.open()
 	c.mu.Lock()
 	c.opening = nil
 	c.mu.Unlock()
-	opening <- mcpOpenResult{client: client, err: err}
+	opening.resolve(client, err)
 	return client, err
 }
 
@@ -518,7 +537,7 @@ func (c *McpServerConnection) Reconnect() error {
 	client := c.client
 	c.mu.Unlock()
 	if opening != nil {
-		<-opening
+		opening.wait()
 	}
 	if client != nil {
 		c.dropClient(client)
@@ -534,7 +553,7 @@ func (c *McpServerConnection) SignOut() error {
 	client := c.client
 	c.mu.Unlock()
 	if opening != nil {
-		<-opening
+		opening.wait()
 	}
 	if client != nil {
 		c.dropClient(client)
@@ -650,6 +669,14 @@ func (c *McpServerConnection) connectOnce() (*mcp.McpClient, error) {
 		_ = client.Close()
 		return nil, err
 	}
+	// Closing the client fails its pending initialize or discovery
+	// requests, so an aborted shutdown ends the connect promptly (the
+	// reference registers shutdown -> closeClient here).
+	c.mu.Lock()
+	shutdown := c.shutdown
+	c.mu.Unlock()
+	removeAbort := shutdown.Signal().OnAbort(func() { _ = client.Close() })
+	defer removeAbort()
 	if _, err := client.Connect(transport); err != nil {
 		_ = client.Close()
 		if stdio, isStdio := transport.(*mcp.StdioTransport); isStdio {
@@ -787,11 +814,11 @@ func (c *McpServerConnection) Close() error {
 		_ = client.Close()
 	}
 	// Resolve once no transport of this server is open, including one that
-	// was still connecting: closing the client fails its pending
-	// initialize or discovery requests.
+	// was still connecting: the shutdown abort above fails its pending
+	// initialize or discovery requests, so open() returns promptly.
 	if opening != nil {
-		if result := <-opening; result.client != nil {
-			_ = result.client.Close()
+		if client, _ := opening.wait(); client != nil {
+			_ = client.Close()
 		}
 	}
 	// A refresh the server already answered may have rotated the refresh

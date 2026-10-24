@@ -182,3 +182,51 @@ func TestResolveModelReferenceTable(t *testing.T) {
 		})
 	}
 }
+
+// ProviderModels must stay inside the target provider (review of d7f7e0dfe):
+// with gpt-6.1-sol on both github-copilot and openai-codex, an
+// openai-codex custom id must clone an openai-codex model.
+func TestReferenceTargetProviderModelsStayInProvider(t *testing.T) {
+	models := []*ai.Model{
+		referenceModel("github-copilot", "gpt-6.1-sol"),
+		referenceModel("openai-codex", "gpt-6.1-sol"),
+		referenceModel("openai-codex", "other"),
+	}
+	result := ResolveModelReference(ModelReferenceRequest{Text: "openai-codex/brand-new-id"}, models, referenceUsable(nil))
+	if result.Status != "not-found" || !result.HasTarget {
+		t.Fatalf("result = %+v", result)
+	}
+	for _, model := range result.Target.ProviderModels {
+		if model.Provider != "openai-codex" {
+			t.Fatalf("foreign model %s/%s in target", model.Provider, model.ID)
+		}
+	}
+	if len(result.Target.ProviderModels) != 2 {
+		t.Fatalf("providerModels = %v", result.Target.ProviderModels)
+	}
+}
+
+// --api-key does not choose the provider (d7f7e0dfe inlineApiKey).
+func TestResolveCliModelInlineApiKeyDoesNotChooseProvider(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(EnvAgentDirName(), dir)
+	runtime, err := NewModelRuntime(&CreateModelRuntimeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := ResolveCliModel(ResolveCliModelOptions{
+		CliModel:     "shared",
+		ModelRuntime: runtime,
+	})
+	if result.Error == "" {
+		t.Fatal("ambiguous bare id should error")
+	}
+	result = ResolveCliModel(ResolveCliModelOptions{
+		CliModel:     "gpt-4o",
+		ModelRuntime: runtime,
+	})
+	if result.Error != "" {
+		t.Fatalf("unique id resolved: %s", result.Error)
+	}
+	_ = result
+}

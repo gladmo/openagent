@@ -126,19 +126,13 @@ func ResolveModelReference(request ModelReferenceRequest, models []*ai.Model, us
 			target.ThinkingLevel, target.HasThinking = level, true
 		}
 	}
-	target.ProviderModels = append([]*ai.Model{anchor}, pool[:anchorIndex]...)
-	target.ProviderModels = append(target.ProviderModels, pool[anchorIndex+1:]...)
-	return ModelReferenceResult{Status: "not-found", Target: target, HasTarget: true}
-}
-
-// FindExactModelReferenceMatch is the exact `provider/id` or bare id
-// lookup without thinking suffixes or fuzzy matching.
-func FindExactModelReferenceMatchViaResolve(modelReference string, models []*ai.Model) *ai.Model {
-	result := ResolveModelReference(ModelReferenceRequest{Text: modelReference, ThinkingSuffix: ThinkingSuffixNone, Fuzzy: false}, models, func(string) bool { return true })
-	if result.Status == "resolved" {
-		return result.Model
+	target.ProviderModels = []*ai.Model{anchor}
+	for index, model := range pool {
+		if index != anchorIndex && model.Provider == anchor.Provider {
+			target.ProviderModels = append(target.ProviderModels, model)
+		}
 	}
-	return nil
+	return ModelReferenceResult{Status: "not-found", Target: target, HasTarget: true}
 }
 
 func splitThinkingSuffix(text string) (base, level string, ok bool) {

@@ -196,6 +196,7 @@ func applyCliModelSelection(session *codingagent.AgentSession, parsed *codingage
 		CliModel:     parsed.Model,
 		CliThinking:  parsed.Thinking,
 		ModelRuntime: session.ModelRuntime,
+		InlineApiKey: parsed.APIKey != "",
 	})
 	if resolved.Error != "" {
 		return resolved.Error, true

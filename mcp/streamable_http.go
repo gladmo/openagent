@@ -291,21 +291,27 @@ func (t *StreamableHttpTransport) Close() error {
 	if started && sessionID != "" {
 		t.mu.Lock()
 		token, hasToken := t.lastToken, t.lastTokenValid
+		protocolVersion := t.protocolVersion
 		t.mu.Unlock()
+		// The DELETE itself is bounded (the reference aborts it after 1s)
+		// so the goroutine cannot outlive Close on a dead server.
+		deleteController := abort.NewController()
+		deleteTimer := time.AfterFunc(time.Second, deleteController.Abort)
+		defer deleteTimer.Stop()
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
 			headers := append([][2]string(nil), t.options.Headers...)
 			headers = append(headers, [2]string{"Mcp-Session-Id", sessionID})
-			if t.protocolVersion != "" {
-				headers = append(headers, [2]string{"MCP-Protocol-Version", t.protocolVersion})
+			if protocolVersion != "" {
+				headers = append(headers, [2]string{"MCP-Protocol-Version", protocolVersion})
 			}
 			// DELETE with the cached token; the provider's token() may
 			// refresh over the network during shutdown.
 			if hasToken && token != "" {
 				headers = append(headers, [2]string{"Authorization", "Bearer " + token})
 			}
-			request := &FetchRequest{Method: "DELETE", URL: t.url, Headers: headers}
+			request := &FetchRequest{Method: "DELETE", URL: t.url, Headers: headers, Signal: deleteController.Signal()}
 			if response, err := t.fetch(request); err == nil {
 				response.Discard()
 			}
@@ -325,10 +331,8 @@ func (t *StreamableHttpTransport) Close() error {
 // authorizedFetch fetches with auth headers. A 401 (or a 403 asking for
 // more scope) is handed to the auth provider once, and the request is
 // retried with whatever credentials it left behind. sendSignal only stops
-// dispatch: getting a token or the authorization recovery can take a while,
-// and a request its sender gave up on in the meantime must not reach the
-// server. It does not abort the shared recovery, which other requests may
-// wait for.
+// dispatch: a request its sender gave up on must not reach the server; it
+// does not abort the shared recovery, which other requests may wait for.
 func (t *StreamableHttpTransport) authorizedFetch(method string, extra [][2]string, body string, sendSignal *abort.Signal) (*FetchResponse, error) {
 	var onUnauthorized func(*UnauthorizedContext) error
 	if t.options.AuthProvider != nil {

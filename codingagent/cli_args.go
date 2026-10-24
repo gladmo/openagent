@@ -505,10 +505,20 @@ func applyPrintToolSelection(config *AgentSessionConfig, settings *SettingsManag
 			}
 		}
 	}
+	// The modifier base mirrors the sdk: noTools empties it, the
+	// defaultTools setting replaces the built-in default loadout.
+	modifierBase := []string(nil)
+	if options.NoTools == "" {
+		if configured := settings.GetDefaultTools(); configured != nil {
+			modifierBase = configured
+		} else {
+			modifierBase = append([]string(nil), DefaultToolNames...)
+		}
+	}
 	var selectedToolNames []string
 	hasSelection := false
 	if toolModifiers != nil {
-		selectedToolNames = ApplyToolModifiers(DefaultToolNames, toolModifiers)
+		selectedToolNames = ApplyToolModifiers(modifierBase, toolModifiers)
 		hasSelection = true
 	} else if options.Tools != nil {
 		selectedToolNames = append([]string(nil), options.Tools...)
@@ -522,19 +532,11 @@ func applyPrintToolSelection(config *AgentSessionConfig, settings *SettingsManag
 		if options.NoTools == "all" {
 			config.AllowedToolNames = selectedToolNames
 		}
-	} else if options.Tools != nil && noMcp {
-		config.AllowedToolNames = selectedToolNames
 	} else if options.Tools != nil {
-		keepsMcp := false
-		for _, entry := range options.Tools {
-			if strings.HasPrefix(entry, "mcp__") {
-				keepsMcp = true
-				break
-			}
-		}
-		if !keepsMcp {
-			config.AllowedToolNames = selectedToolNames
-		}
+		// The matcher in AgentSession evaluates patterns, so the list
+		// restricts builtins and MCP tools alike; entries naming mcp__
+		// tools simply keep those MCP tools matching.
+		config.AllowedToolNames = selectedToolNames
 	} else if options.NoTools == "all" {
 		config.AllowedToolNames = []string{}
 	}

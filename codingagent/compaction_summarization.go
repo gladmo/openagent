@@ -117,6 +117,8 @@ func GetSummarizationFailure(response *ai.AssistantMessage, label string) string
 
 // SummarizationOptions configure one summarization call.
 type SummarizationOptions struct {
+	// MaxTokens is never set today: summary requests use the model's own
+	// output limit (#9512). Kept for the options shape.
 	MaxTokens     int
 	ApiKey        string
 	Headers       map[string]string
@@ -225,8 +227,8 @@ func BuildSummarizationContext(promptText string) []ai.Message {
 
 // GenerateSummaryOptions configure one summary generation.
 type GenerateSummaryOptions struct {
-	// ReserveTokens thresholds when compaction runs; it no longer caps
-	// reserve, model max)).
+	// ReserveTokens thresholds when compaction runs; it no longer caps the
+	// summary budget (#9512).
 	ReserveTokens      int
 	ApiKey             string
 	Headers            map[string]string

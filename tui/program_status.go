@@ -56,12 +56,17 @@ func truncateProgramStatusUTF8(text string, maxBytes int) string {
 	bytes := 0
 	end := 0
 	for index, char := range text {
-		size := utf8.RuneLen(char)
-		if bytes+size > maxBytes {
+		// Range reports invalid bytes as RuneError at width 1; derive the
+		// width from the index delta so the cut never splits a sequence.
+		next := index + utf8.RuneLen(char)
+		if char == utf8.RuneError && next > len(text) {
+			next = index + 1
+		}
+		if bytes+(next-index) > maxBytes {
 			break
 		}
-		bytes += size
-		end = index + utf8.RuneLen(char)
+		bytes += next - index
+		end = next
 	}
 	return text[:end]
 }

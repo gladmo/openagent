@@ -379,6 +379,9 @@ type ResolveCliModelOptions struct {
 	CliModel     string
 	CliThinking  string
 	ModelRuntime *ModelRuntime
+	// InlineApiKey marks --api-key: the key goes to whichever provider is
+	// selected, so stored credentials must not choose it (d7f7e0dfe).
+	InlineApiKey bool
 }
 
 // ResolveCliModelResult reports one CLI model resolution; Error set means
@@ -420,7 +423,11 @@ func ResolveCliModel(options ResolveCliModelOptions) ResolveCliModelResult {
 		}
 	}
 
-	usable := func(providerID string) bool { return modelRuntime.HasConfiguredAuth(providerID) }
+	// An inline key goes to whichever provider is selected, so stored
+	// credentials must not choose it.
+	usable := func(providerID string) bool {
+		return !options.InlineApiKey && modelRuntime.HasConfiguredAuth(providerID)
+	}
 	result := ResolveModelReference(ModelReferenceRequest{
 		Text:           cliModel,
 		Provider:       provider,
@@ -437,7 +444,9 @@ func ResolveCliModel(options ResolveCliModelOptions) ResolveCliModelResult {
 		}
 		sort.Strings(matches)
 		authHint := "No matching provider is authenticated."
-		if result.UsableCount > 0 {
+		if options.InlineApiKey {
+			authHint = "--api-key does not choose a provider."
+		} else if result.UsableCount > 0 {
 			authHint = "More than one matching provider is authenticated."
 		}
 		return ResolveCliModelResult{Error: fmt.Sprintf(

@@ -132,13 +132,15 @@ var shiftedSymbolKeys = map[rune]bool{
 
 // logicalShiftedSymbolCandidate treats a shifted symbol (Kitty reports "+"
 // as Shift plus the physical "=" key) as the produced symbol without Shift,
-// preserving Ctrl, Alt, and Super.
-func logicalShiftedSymbolCandidate(codepoint, modifier int) (int, int, bool) {
+// preserving Ctrl, Alt, and Super. allowed picks the vocabulary: Kitty
+// reports a shiftedKey for every symbol (full symbol set); modifyOtherKeys
+// reports the produced character (only symbols Shift can produce).
+func logicalShiftedSymbolCandidate(codepoint, modifier int, allowed map[rune]bool) (int, int, bool) {
 	if codepoint == 0 || modifier&modShift == 0 {
 		return 0, 0, false
 	}
 	normalized := normalizeKittyFunctionalCodepoint(codepoint)
-	if !shiftedSymbolKeys[rune(normalized)] {
+	if !allowed[rune(normalized)] {
 		return 0, 0, false
 	}
 	return normalized, modifier &^ modShift, true
@@ -534,7 +536,7 @@ func matchesKittySequence(data string, expectedCodepoint, expectedModifier int) 
 	// Logical match: bindings name the produced symbol, so consume that
 	// implicit Shift while preserving Ctrl, Alt, and Super. The physical
 	// "shift+=" spelling stays valid through the match above.
-	if code, modifier, ok := logicalShiftedSymbolCandidate(parsed.shiftedKey, actualMod); ok {
+	if code, modifier, ok := logicalShiftedSymbolCandidate(parsed.shiftedKey, actualMod, symbolKeys); ok {
 		if modifier&^lockMask == expectedMod && code == normalizeKittyFunctionalCodepoint(expectedCodepoint) {
 			return true
 		}
@@ -641,7 +643,7 @@ func matchesPrintableModifyOtherKeys(data string, expectedKeycode, expectedModif
 	if physicalMatch {
 		return true
 	}
-	code, modifier, ok := logicalShiftedSymbolCandidate(parsed.codepoint, parsed.modifier)
+	code, modifier, ok := logicalShiftedSymbolCandidate(parsed.codepoint, parsed.modifier, symbolKeys)
 	return ok && modifier == expectedModifier && code == expectedKeycode
 }
 
@@ -1116,7 +1118,7 @@ func formatParsedKey(codepoint, modifier, baseLayoutKey int) (string, bool) {
 func ParseKey(data string) (string, bool) {
 	if kitty := parseKittySequence(data); kitty != nil {
 		code, modifier := kitty.codepoint, kitty.modifier
-		if logicalCode, logicalModifier, ok := logicalShiftedSymbolCandidate(kitty.shiftedKey, kitty.modifier); ok {
+		if logicalCode, logicalModifier, ok := logicalShiftedSymbolCandidate(kitty.shiftedKey, kitty.modifier, symbolKeys); ok {
 			code, modifier = logicalCode, logicalModifier
 		}
 		return formatParsedKey(code, modifier, kitty.baseLayoutKey)
@@ -1124,7 +1126,7 @@ func ParseKey(data string) (string, bool) {
 
 	if modifyOtherKeys := parseModifyOtherKeysSequence(data); modifyOtherKeys != nil {
 		code, modifier := modifyOtherKeys.codepoint, modifyOtherKeys.modifier
-		if logicalCode, logicalModifier, ok := logicalShiftedSymbolCandidate(modifyOtherKeys.codepoint, modifyOtherKeys.modifier); ok {
+		if logicalCode, logicalModifier, ok := logicalShiftedSymbolCandidate(modifyOtherKeys.codepoint, modifyOtherKeys.modifier, shiftedSymbolKeys); ok {
 			code, modifier = logicalCode, logicalModifier
 		}
 		return formatParsedKey(code, modifier, 0)

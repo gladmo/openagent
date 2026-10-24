@@ -69,8 +69,8 @@ type AgentSession struct {
 	activeToolNames      []string
 
 	initialActiveToolNames []string
-	allowedToolNames       map[string]bool
-	excludedToolNames      map[string]bool
+	allowedToolNames       func(string) bool
+	excludedToolNames      func(string) bool
 }
 
 // AgentSessionRuntimeOptions construct the session runtime surface.
@@ -118,16 +118,10 @@ func NewAgentSession(options AgentSessionRuntimeOptions) *AgentSession {
 		initialActiveToolNames: initialActiveToolNames,
 	}
 	if config.AllowedToolNames != nil {
-		session.allowedToolNames = map[string]bool{}
-		for _, name := range config.AllowedToolNames {
-			session.allowedToolNames[name] = true
-		}
+		session.allowedToolNames = CreateToolNameMatcher(config.AllowedToolNames)
 	}
 	if config.ExcludedToolNames != nil {
-		session.excludedToolNames = map[string]bool{}
-		for _, name := range config.ExcludedToolNames {
-			session.excludedToolNames[name] = true
-		}
+		session.excludedToolNames = CreateToolNameMatcher(config.ExcludedToolNames)
 	}
 
 	session.buildRuntime()
@@ -203,10 +197,10 @@ func (s *AgentSession) buildRuntime() {
 	definitions = append(definitions, s.customTools...)
 
 	for _, definition := range definitions {
-		if s.allowedToolNames != nil && !s.allowedToolNames[definition.Name] {
+		if s.allowedToolNames != nil && !s.allowedToolNames(definition.Name) {
 			continue
 		}
-		if s.excludedToolNames != nil && s.excludedToolNames[definition.Name] {
+		if s.excludedToolNames != nil && s.excludedToolNames(definition.Name) {
 			continue
 		}
 		s.registerToolDefinition(definition)

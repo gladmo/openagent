@@ -499,3 +499,22 @@ func TestModifyOtherKeysShiftedSymbols(t *testing.T) {
 		t.Fatalf("parseKey = %q ok=%v", key, ok)
 	}
 }
+
+// Port of the allowedSymbols parameter (7f9e1198f): the Kitty path accepts
+// every symbol (a shiftedKey exists for unshifted symbols too), while
+// modifyOtherKeys only matches symbols Shift can produce.
+func TestLogicalShiftedSymbolVocabulary(t *testing.T) {
+	SetKittyProtocolActive(true)
+	defer SetKittyProtocolActive(false)
+	// "-" is a symbol but not a shifted one: Kitty matches a binding naming
+	// "-" via the shiftedKey of the physical key; mOAK does not.
+	if _, _, ok := logicalShiftedSymbolCandidate('-', modShift, symbolKeys); !ok {
+		t.Fatal("Kitty vocabulary excluded an unshifted symbol")
+	}
+	if _, _, ok := logicalShiftedSymbolCandidate('-', modShift, shiftedSymbolKeys); ok {
+		t.Fatal("mOAK vocabulary accepted an unshifted symbol")
+	}
+	if _, _, ok := logicalShiftedSymbolCandidate('+', modShift, shiftedSymbolKeys); !ok {
+		t.Fatal("shifted symbol rejected")
+	}
+}

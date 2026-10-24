@@ -49,8 +49,11 @@ type TraceQuery struct {
 	Errors     bool           `json:"errors,omitempty"`
 	StartMin   int64          `json:"startMin,omitempty"`
 	StartMax   int64          `json:"startMax,omitempty"`
-	Limit      int            `json:"limit,omitempty"` // positive page size; default 20
-	Cursor     string         `json:"cursor,omitempty"`
+	Limit      int            `json:"limit,omitempty"` // positive page size; default 20 (non-positive falls back)
+	// Cursor is an opaque continuation from the previous page; retain the
+	// same filters. Unparseable or malformed cursors are ignored (the first
+	// page is returned) rather than rejected.
+	Cursor string `json:"cursor,omitempty"`
 }
 
 // MetricQuery filters stored metrics by interval start time.

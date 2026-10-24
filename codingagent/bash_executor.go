@@ -16,7 +16,7 @@ import (
 
 // ansiPattern matches CSI/OSC escape sequences and other control
 // sequences the reference's stripAnsi removes.
-var ansiPattern = regexp.MustCompile("\x1b\\[[0-9;]*[a-zA-Z]|\x1b\\][^\x07\x1b]*(?:\x07|\x1b\\\\)|\x1b[PX^_][^\x1b]*\x1b\\\\|\x07|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+var ansiPattern = regexp.MustCompile("\\x1b\\[[0-9;]*[a-zA-Z]|\\x1b\\][^\\x07\\x1b\\x9c]*(?:\\x07|\\x1b\\\\|\\x9c)|\\x1b[PX^_][^\\x1b]*\\x1b\\\\|\\x07|[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]")
 
 // StripAnsi removes ANSI escape sequences and control characters.
 func StripAnsi(value string) string {
@@ -126,7 +126,41 @@ func ExecuteBashWithOperations(command, cwd string, operations BashOperations, o
 		}
 	}
 
+	flushTail := func() {
+		// End of stream: whatever was held back (an unfinished escape
+		// sequence, a partial UTF-8 rune) is emitted as-is, matching the
+		// reference's flushOutput.
+		rest := pendingAnsi + string(decoderPending)
+		pendingAnsi, decoderPending = "", nil
+		if rest == "" {
+			return
+		}
+		text := strings.ReplaceAll(SanitizeBinaryOutput(StripAnsi(rest)), "\r", "")
+		if text == "" {
+			return
+		}
+		if totalBytes > DefaultMaxBytes {
+			ensureTempFile()
+		}
+		if tempFile != nil {
+			_, _ = tempFile.WriteString(text)
+		}
+		outputChunks = append(outputChunks, text)
+		outputBytes += len(text)
+		for outputBytes > bashExecutorMaxOutputBytes && len(outputChunks) > 1 {
+			removed := outputChunks[0]
+			outputChunks = outputChunks[1:]
+			outputBytes -= len(removed)
+		}
+		if options != nil && options.OnChunk != nil {
+			options.OnChunk(text)
+		}
+	}
+
 	finalize := func() (*BashResult, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		flushTail()
 		fullOutput := strings.Join(outputChunks, "")
 		truncation := TruncateTail(fullOutput, TruncationOptions{})
 		if truncation.Truncated {
@@ -183,8 +217,9 @@ func ExecuteBashWithOperations(command, cwd string, operations BashOperations, o
 }
 
 // maxPendingAnsiLength bounds the unfinished sequence held back while
-// streaming; longer ones are processed as-is.
-const maxPendingAnsiLength = 32
+// streaming; longer ones are processed as-is. 256 bytes matches the
+// reference window (256 code units) and covers real OSC 8/7501 payloads.
+const maxPendingAnsiLength = 256
 
 // SplitIncompleteAnsiSuffix holds back an unfinished trailing escape
 // sequence so a chunk boundary inside it cannot leak partial codes: an OSC
@@ -228,7 +263,12 @@ func unfinishedSequenceLength(window string) (int, bool) {
 				if index+1 < len(window) && window[index+1] == '\\' {
 					return index + 2, false
 				}
-				return index, true
+				// A bare ESC is a legal body character (the TS body class
+				// only excludes it when it starts the ST); keep scanning,
+				// and hold the whole unterminated OSC when the window ends.
+				if index == len(window)-1 {
+					return index, true
+				}
 			}
 		}
 		return len(window), true

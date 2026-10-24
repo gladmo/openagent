@@ -709,9 +709,11 @@ func waitForMcpAuthorizationResponse(
 	signal *abort.Signal,
 ) (*mcpAuthorizationResponse, error) {
 	controller := abort.NewController()
+	// AbortSignal.any: an already-aborted sign-in signal aborts the prompt
+	// immediately (OnAbort alone never fires post-abort).
+	promptSignal := controller.Signal()
 	if signal != nil {
-		remove := signal.OnAbort(controller.Abort)
-		defer remove()
+		promptSignal = abort.Any(controller.Signal(), signal)
 	}
 	fromBrowser := callback.WaitForCallback(state, redirectURLPath(redirectURL))
 	type outcome struct {
@@ -720,7 +722,7 @@ func waitForMcpAuthorizationResponse(
 	}
 	fromUser := make(chan outcome, 1)
 	go func() {
-		input, err := prompt.PromptForRedirectURL(controller.Signal())
+		input, err := prompt.PromptForRedirectURL(promptSignal)
 		if err != nil {
 			fromUser <- outcome{err: err}
 			return

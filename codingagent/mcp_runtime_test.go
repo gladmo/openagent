@@ -461,3 +461,36 @@ func TestMcpCloseWaitsForConnectingAttempt(t *testing.T) {
 		t.Fatalf("state = %s", connection.State())
 	}
 }
+
+// Two concurrent GetClient waiters plus Close all observe the same open
+// outcome (the reference shares one promise); nobody deadlocks.
+func TestMcpOpeningSharedAcrossWaiters(t *testing.T) {
+	entry := mcpTestEntry(t, `{"type":"stdio","command":"true"}`)
+	connection := NewMcpServerConnection(McpServerConnectionOptions{
+		Entry:       entry,
+		Credentials: NewMcpOAuthCredentialStoreAt(filepath.Join(os.TempDir(), "mcp-auth-unused.json")),
+		CreateTransport: func(McpServerEntry, string, *mcp.AuthProvider) (mcp.McpTransport, error) {
+			client, _ := mcp.CreateInMemoryTransportPair()
+			// Answer initialize over the server side would need a client
+			// handshake; a closed client is enough to end the open attempt.
+			return client, nil
+		},
+	})
+	results := make(chan error, 3)
+	for i := 0; i < 2; i++ {
+		go func() {
+			_, err := connection.GetClient()
+			results <- err
+		}()
+	}
+	go func() {
+		results <- connection.Close()
+	}()
+	for i := 0; i < 3; i++ {
+		select {
+		case <-results:
+		case <-time.After(5 * time.Second):
+			t.Fatal("waiter did not observe the open outcome (deadlock)")
+		}
+	}
+}

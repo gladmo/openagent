@@ -22,5 +22,6 @@ pi 参考仓库在移植钉定的面（树 `ff72faba2`、MCP `a276dabe5`）之�
 
 - 已移植面现在跟踪 `bd3c9b823`；基准按面钉定（树 `ff72faba2` + 区间迁移；MCP 栈 `a276dabe5` + 区间修复；目录快照 `bd3c9b823`）。PARITY.md 持有映射与延后台账。
 - 区间引入并已记录的 Go 偏差：telemetry carrier 表为实例域（无 WeakMap）；RenderTrace 属性按键排序；span 时间戳毫秒取整；detailed User-Agent 报告 Go 运时段；退出恢复走 signal.Notify（直接 os.Exit 与异 goroutine panic 不可恢复）；RE2 无环视 → 边界字符消费类（状态码）与过程式扫描（终端回复）；CJK 友好强调以 punct+word closer 规则近似，该近似同时暴露并修复了 rune/字节宽度错位。
+- 退出恢复的信号处理器在 TUI 运行期间持有 SIGINT/SIGTERM/SIGHUP 的进程生命周期语义：恢复、重置处置、重发信号并退出——即使与正常 Stop 竞争也是如此，且会抢占宿主应用对这三个信号自己的 os/signal 处理器（本仓库今天没有；TS 参考用 exit 钩子且从不 kill）。
 - 延后台账是未来 durable/chord2 决策的输入；今天的延后不阻塞已移植树里的任何内容。
 - 每批以 owning 包测试验证，随后 `gofmt -l .`（空）、`go vet ./...`、`go build ./...`、`go test ./...`、`node scripts/run-gates.mjs`。创建时 supersession 检查：[MCP port-ahead note](2026-10-14-mcp-port-ahead-of-baseline.md) 保持 active（其 M2 延后不变，且现已列入区间台账）；没有其他 note 覆盖基准推进。

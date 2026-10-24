@@ -246,6 +246,13 @@ func NewTuiAltScreen(terminal Terminal, showHardwareCursor *bool, logDirectory s
 	screen.LogDirectory = logDirectory
 	screen.ModeField = TuiModeFullscreen
 	screen.uploadedKittyImages = map[int]*cachedKittyImage{}
+	// The fatal-signal restore path may hold TuiBase.mu (the same mutex as
+	// screen.mu); the override reads the alt-screen state the restore path
+	// already serialized. The constructor runs before Start, so no lock is
+	// needed here.
+	screen.SetExitRestoreOverride(func() (string, string) {
+		return screen.exitRestorePrefixLocked(), screen.exitRestoreSuffixLocked()
+	})
 
 	screen.implicitDocument = &implicitDocumentComponent{base: screen}
 	screen.implicitScrollView = NewScrollView(screen.implicitDocument, ScrollViewOptions{Follow: "end", Primary: true})
@@ -1047,15 +1054,19 @@ func (s *TuiAltScreen) clearTextSelection() {
 // output ends, mouse tracking stops, autowrap re-enables, then the base
 // prefix (kitty flags were popped by the terminal's own restore).
 func (s *TuiAltScreen) ExitRestorePrefix() string {
-	prefix := s.TuiBase.ExitRestorePrefix()
 	s.mu.Lock()
-	active, mouseEnabled := s.altScreenActive, s.mouseEnabled
-	s.mu.Unlock()
-	if !active {
+	defer s.mu.Unlock()
+	return s.exitRestorePrefixLocked()
+}
+
+// exitRestorePrefixLocked requires s.mu.
+func (s *TuiAltScreen) exitRestorePrefixLocked() string {
+	prefix := s.TuiBase.ExitRestorePrefix()
+	if !s.altScreenActive {
 		return prefix
 	}
 	restored := endSyncOutput
-	if mouseEnabled {
+	if s.mouseEnabled {
 		restored += disableMouseSeq
 	}
 	restored += enableAutowrap
@@ -1064,11 +1075,15 @@ func (s *TuiAltScreen) ExitRestorePrefix() string {
 
 // ExitRestoreSuffix leaves the alternate screen and shows the cursor.
 func (s *TuiAltScreen) ExitRestoreSuffix() string {
-	suffix := s.TuiBase.ExitRestoreSuffix()
 	s.mu.Lock()
-	active := s.altScreenActive
-	s.mu.Unlock()
-	if !active {
+	defer s.mu.Unlock()
+	return s.exitRestoreSuffixLocked()
+}
+
+// exitRestoreSuffixLocked requires s.mu.
+func (s *TuiAltScreen) exitRestoreSuffixLocked() string {
+	suffix := s.TuiBase.ExitRestoreSuffix()
+	if !s.altScreenActive {
 		return suffix
 	}
 	return suffix + exitAltScreen + "\x1b[?25h"

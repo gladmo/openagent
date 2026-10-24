@@ -209,9 +209,11 @@ type AgentSessionConfig struct {
 	// read/bash/edit/write (after transcript restore), an empty slice starts
 	// with no tools.
 	InitialActiveToolNames []string
-	// AllowedToolNames is an optional allowlist (empty = no tools allowed).
+	// AllowedToolNames is an optional allowlist of tool names or patterns
+	// (* matches any characters); empty = no tools allowed.
 	AllowedToolNames []string
-	// ExcludedToolNames is an optional denylist.
+	// ExcludedToolNames is an optional denylist of tool names or patterns;
+	// it applies after the allowlist.
 	ExcludedToolNames []string
 }
 

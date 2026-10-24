@@ -718,3 +718,22 @@ func TestMarkdownCjkEmphasis(t *testing.T) {
 		}
 	}
 }
+
+// Strikethrough over multibyte content: the width fix (review of d684400)
+// keeps the source slicing on byte boundaries.
+func TestMarkdownStrictDelMultibyte(t *testing.T) {
+	theme := defaultMarkdownTheme
+	theme.Strikethrough = func(text string) string { return "<s>" + text + "</s>" }
+	markdown := NewMarkdown("~~删除~~x", 0, 0, theme, nil, nil)
+	lines := markdown.Render(40)
+	got := strings.Join(lines, "")
+	if !strings.Contains(got, "<s>删除</s>") || !strings.Contains(got, "x") || strings.Contains(got, "~~") {
+		t.Fatalf("strike = %q", got)
+	}
+	// A rejected __ run renders literally as a whole (no em re-match).
+	markdown = NewMarkdown("__end.__Then next", 0, 0, defaultMarkdownTheme, nil, nil)
+	got = strings.Join(markdown.Render(40), "")
+	if strings.Contains(got, "\x1b[3m") || !strings.Contains(got, "__end.__Then") {
+		t.Fatalf("underscore run = %q", got)
+	}
+}
