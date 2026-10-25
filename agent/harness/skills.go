@@ -7,9 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/gladmo/openagent/ignore"
+	"github.com/gladmo/openagent/yamlv3"
 )
 
 // Skill limits.

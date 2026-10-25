@@ -3679,3 +3679,20 @@ Remaining ocr findings NOT fixed this round (tracked for follow-up): SessionMana
   test unchanged and passing.
 - Docs: PARITY harness-root bullet (ExecCapture) + env/local row reworded;
   Agent Note pair.
+
+## DEPS ROUND-1 DONE (vendor yaml.v3; go.mod to zero dependencies)
+
+- gopkg.in/yaml.v3 v3.0.1 copied verbatim into yamlv3/ (package name
+  stays `yaml`; 13 non-test files + LICENSE + NOTICE). Only mechanical
+  deviation: gofmt doc-comment canonicalization on 9 files (comment
+  whitespace, no code); deviation list + audit recipe (diff -r against
+  the module cache) live in yamlv3/README.md. Upstream *_test.go
+  (gopkg.in/check.v1) not copied; repo-owned yamlv3/yamlv3_test.go pins
+  the consumed frontmatter subset (map/struct decode, scalar resolution,
+  flow-sequence-is-not-a-string, empty/error documents).
+- Consumers switch import path only: codingagent/utils_core.go,
+  agent/harness/skills.go, agent/harness/prompt_templates.go. Zero
+  call-site changes; frontmatter/skills/template tests pass unmodified
+  (incl. the argument-hint [file] -> []any pin). go.sum deleted (empty
+  after tidy); GOPROXY=off build + tests green. Decision + alternatives
+  in Agent Note vendor-yaml-v3.

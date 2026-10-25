@@ -19,6 +19,7 @@ codingagent/ Ported pi coding-agent CLI: sessions, tools, extensions, modes
 cmd/         Binary entries: openagent (CLI), openagent-rpc
 abort/       AbortSignal/AbortController shim, nil-safe
 jsonx/ typebox/ partialjson/ diff/ ignore/ minimatch/   Ported npm libraries, JS semantics preserved
+yamlv3/      Vendored gopkg.in/yaml.v3 v3.0.1
 examples/    Runnable example agents
 docs/        Documentation; tier standard: docs/AGENTS.md
 scripts/     Verification gates (scripts/AGENTS.md)
@@ -28,7 +29,6 @@ scripts/     Verification gates (scripts/AGENTS.md)
 ## Commands
 
 ```sh
-go mod download            # fetch dependencies (gopkg.in/yaml.v3 only)
 go test ./...              # unit, parity, and golden tests
 gofmt -l .                 # lint: prints nothing when formatting is clean
 go vet ./...               # static analysis

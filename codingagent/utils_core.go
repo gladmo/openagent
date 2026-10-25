@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/gladmo/openagent/abort"
-	"gopkg.in/yaml.v3"
+	"github.com/gladmo/openagent/yamlv3"
 )
 
 // =============================================================================

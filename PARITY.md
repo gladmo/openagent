@@ -13,7 +13,7 @@
 | partial-json 0.1.7 | — | ✅ | `partialjson/` | |
 | jsdiff 8.0.4 | — | ✅ | `diff/` | Myers 行差分 + StructuredPatch/FormatPatch |
 | ignore 7.0.8 | — | ✅ | `ignore/` | wildmatch、尾 globstar、POSIX 类 |
-| yaml（唯一外部依赖） | — | ✅ | go.mod | gopkg.in/yaml.v3 |
+| yaml.v3 3.0.1 | — | ✅ | `yamlv3/` | 整体内联（逐字复制 + gofmt 注释规范化）；上游 check.v1 测试不随附，见 yamlv3/README.md |
 | chord 根（JsonValue/CopyJson） | — | ✅ | `chord/` | 对象= jsonx.Obj |
 | chord/context | — | ✅ | `chord/context/` | 链、withoutAbortSignal 遮蔽 |
 | chord/delta（op/apply/codec） | — | ✅ | `chord/delta/` | 七元组 op、Apply/ApplyImmutable、encoder/decoder |

@@ -19,7 +19,7 @@ go mod download
 go build ./... && go vet ./...
 ```
 
-`go mod download` fetches the single dependency (`gopkg.in/yaml.v3`); nothing is generated afterward. Hooks are optional: run `lefthook install`, or wire `node scripts/run-gates.mjs` into `.git/hooks/pre-commit` by hand.
+The module has zero external dependencies — YAML is vendored in-tree at [yamlv3/](../yamlv3/README.md) — so `go mod download` is a no-op; nothing is generated afterward. Hooks are optional: run `lefthook install`, or wire `node scripts/run-gates.mjs` into `.git/hooks/pre-commit` by hand.
 
 Setup is complete when `go build ./... && go vet ./...` exits successfully.
 

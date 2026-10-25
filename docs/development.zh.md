@@ -19,7 +19,7 @@ go mod download
 go build ./... && go vet ./...
 ```
 
-`go mod download` 拉取唯一依赖（`gopkg.in/yaml.v3`），之后没有生成步骤。钩子可选：运行 `lefthook install`，或手工把 `node scripts/run-gates.mjs` 接进 `.git/hooks/pre-commit`。
+模块没有外部依赖——YAML 已整体内联在 [yamlv3/](../yamlv3/README.md)——`go mod download` 为空操作，之后没有生成步骤。钩子可选：运行 `lefthook install`，或手工把 `node scripts/run-gates.mjs` 接进 `.git/hooks/pre-commit`。
 
 `go build ./... && go vet ./...` 成功退出即搭建完成。
 
