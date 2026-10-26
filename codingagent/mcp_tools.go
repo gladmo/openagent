@@ -147,10 +147,6 @@ func mcpTextOf(content []ai.ContentBlock) string {
 	return strings.Join(texts, "\n")
 }
 
-// CreateMcpResultSchema is the output schema of every MCP tool: the
-// CallToolResult scripts receive, with the tool's own output schema as
-// structuredContent. Codemode detects this shape to render
-// CallToolResult<T> declarations.
 // mcpContentBlockSchema describes one MCP content block for the result
 // schema.
 var mcpContentBlockSchema = jsonx.ObjFrom(

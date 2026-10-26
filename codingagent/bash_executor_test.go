@@ -205,3 +205,23 @@ func TestBashExecutorStripsAnsiSplitAcrossChunks(t *testing.T) {
 		t.Fatalf("output = %q", result.Output)
 	}
 }
+
+// Ports of the review fixes: an OSC body containing CJK text and a bare ESC
+// stays pending whole, and 0x9C-terminated OSCs strip.
+func TestSplitIncompleteAnsiMultibyteAndStSequences(t *testing.T) {
+	// CJK inside the OSC: byte-width accounting must not split runes.
+	complete, pending := SplitIncompleteAnsiSuffix("输出\x1b]8;;https://example.test/链接")
+	if complete != "输出" || pending != "\x1b]8;;https://example.test/链接" {
+		t.Fatalf("cjk complete=%q pending=%q", complete, pending)
+	}
+	// U+009C terminator (in valid UTF-8 it is two bytes, C2 9C) completes
+	// the OSC in the scan...
+	complete, _ = SplitIncompleteAnsiSuffix("text \x1b]0;t\u009c after")
+	if complete != "text \x1b]0;t\u009c after" {
+		t.Fatalf("0x9c complete=%q", complete)
+	}
+	// ...and StripAnsi removes it.
+	if got := StripAnsi("\x1b]0;title\u009cX"); got != "X" {
+		t.Fatalf("0x9c strip = %q", got)
+	}
+}

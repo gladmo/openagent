@@ -747,6 +747,11 @@ func waitForMcpAuthorizationResponse(
 		}, nil
 	case userOutcome := <-fromUser:
 		return userOutcome.response, userOutcome.err
+	case <-promptSignal.Done():
+		// The sign-in signal aborted (or was already aborted): the prompt
+		// listener is gone, so cancel the rest and report cancellation.
+		controller.Abort()
+		return nil, &McpSignInCancelledError{}
 	}
 }
 
@@ -883,6 +888,9 @@ func SignInMcpServer(options struct {
 		SkipRefresh: stepUp,
 	}
 	if result, err := mcp.AuthorizeMcp(provider.AsProvider(), flowOptions); err != nil {
+		if options.Signal != nil && options.Signal.Aborted() {
+			return &McpSignInCancelledError{}
+		}
 		return err
 	} else if result == mcp.FlowAuthorized {
 		return nil

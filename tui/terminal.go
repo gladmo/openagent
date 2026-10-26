@@ -16,7 +16,6 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -30,7 +29,14 @@ const (
 	keyboardFragmentTimeoutMs   = 150
 )
 
-var kittyKeyboardProtocolQuery = "\x1b[>" + strconv.Itoa(desiredKittyProtocolFlags) + "u\x1b[?u\x1b[c"
+// kittyKeyboardProtocolFlagsQuery requests the desired Kitty flags and
+// queries them; the DA sentinel that closes negotiation is appended
+// separately (see beginNegotiation).
+var kittyKeyboardProtocolFlagsQuery = "\x1b[>" + strconv.Itoa(desiredKittyProtocolFlags) + "u\x1b[?u"
+
+// deviceAttributesQuery is the DA1 sentinel: terminals that do not know the
+// Kitty keyboard or OSC 7501 programs still answer it.
+var deviceAttributesQuery = "\x1b[c"
 
 // KeyboardProtocolNegotiationSequence is a parsed negotiation reply:
 // kitty-flags (?N u) or device-attributes (?...c).
@@ -294,10 +300,7 @@ func (t *ProcessTerminal) beginNegotiation() {
 	if t.programStatusQueryPending {
 		programStatusQuery = ProgramStatusQuery
 	}
-	// kittyKeyboardProtocolQuery already ends with the DA sentinel; the
-	// program status query goes between the Kitty query and the sentinel.
-	kittyQuery := strings.TrimSuffix(kittyKeyboardProtocolQuery, "\x1b[c")
-	t.writeOut(kittyQuery + programStatusQuery + "\x1b[c")
+	t.writeOut(kittyKeyboardProtocolFlagsQuery + programStatusQuery + deviceAttributesQuery)
 	t.writeProgramStatusLocked()
 }
 
@@ -581,6 +584,10 @@ func (t *ProcessTerminal) RestoreOnExit(before, after string) {
 	sequence := before
 	if t.progressActive {
 		sequence += terminalProgressClearSeq
+	}
+	// Remove the program status on exit paths, like stop() does.
+	if t.programStatusSupported && t.programStatus != nil {
+		sequence += FormatProgramStatus(ProgramStatus{State: "clear"})
 	}
 	sequence += "\x1b[?2004l"
 	if t.keyboardProtocolPushed || t.kittyActive {

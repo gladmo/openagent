@@ -168,3 +168,90 @@ func TestOpenCodeSessionHeadersForCustomProviders(t *testing.T) {
 		t.Fatalf("sessionless headers = %v", headers)
 	}
 }
+
+// Ports of the ocr review fixes: the wrapper injects its identity on nil
+// options too; AttributionOff wins over a stale Attribution; NVIDIA's
+// capitalized name survives multibyte runes.
+func TestWithClientIdentityInjectsOnNilOptions(t *testing.T) {
+	inner := CreateModels()
+	var seen *ClientIdentity
+	// Capture what the wrapper forwards into the inner Models.
+	fake := &captureIdentityModels{inner: inner, seen: &seen}
+	w := WithClientIdentity(fake, &ClientIdentity{Version: "9.9.9"})
+	_, _ = w.Complete(nil, Context{}, nil)
+	if seen == nil || seen.Version != "9.9.9" {
+		t.Fatalf("identity = %+v", seen)
+	}
+	seen = nil
+	_, _ = w.Complete(nil, Context{}, &StreamOptions{})
+	if seen == nil || seen.Version != "9.9.9" {
+		t.Fatalf("explicit options identity = %+v", seen)
+	}
+}
+
+type captureIdentityModels struct {
+	inner MutableModels
+	seen  **ClientIdentity
+}
+
+func (c *captureIdentityModels) Stream(model *Model, context Context, options *StreamOptions) *AssistantMessageEventStream {
+	*c.seen = options.Identity
+	return NewAssistantMessageEventStream()
+}
+func (c *captureIdentityModels) StreamSimple(model *Model, context Context, options *SimpleStreamOptions) *AssistantMessageEventStream {
+	*c.seen = options.Identity
+	return NewAssistantMessageEventStream()
+}
+func (c *captureIdentityModels) Complete(model *Model, context Context, options *StreamOptions) (*AssistantMessage, error) {
+	*c.seen = options.Identity
+	return &AssistantMessage{}, nil
+}
+func (c *captureIdentityModels) CompleteSimple(model *Model, context Context, options *SimpleStreamOptions) (*AssistantMessage, error) {
+	*c.seen = options.Identity
+	return &AssistantMessage{}, nil
+}
+func (c *captureIdentityModels) FetchDeferred(model *Model, handle *DeferredHandle, options *DeferredFetchOptions) *AssistantMessageEventStream {
+	*c.seen = options.Identity
+	return NewAssistantMessageEventStream()
+}
+func (c *captureIdentityModels) CancelDeferred(model *Model, handle *DeferredHandle, options *DeferredCancelOptions) error {
+	*c.seen = options.Identity
+	return nil
+}
+func (c *captureIdentityModels) GetProviders() []Provider       { return c.inner.GetProviders() }
+func (c *captureIdentityModels) GetProvider(id string) Provider { return c.inner.GetProvider(id) }
+func (c *captureIdentityModels) GetModels(provider ...string) []*Model {
+	return c.inner.GetModels(provider...)
+}
+func (c *captureIdentityModels) GetModel(provider, id string) *Model {
+	return c.inner.GetModel(provider, id)
+}
+func (c *captureIdentityModels) SetProvider(provider Provider) { c.inner.SetProvider(provider) }
+func (c *captureIdentityModels) DeleteProvider(id string)      { c.inner.DeleteProvider(id) }
+func (c *captureIdentityModels) ClearProviders()               { c.inner.ClearProviders() }
+func (c *captureIdentityModels) GetAuth(modelOrProvider any) (*AuthResult, bool) {
+	return c.inner.GetAuth(modelOrProvider)
+}
+
+func TestAttributionHeadersOffWins(t *testing.T) {
+	target := identityTarget("openrouter", "https://openrouter.ai/api/v1")
+	if headers := AttributionHeaders(target, &ClientIdentity{Attribution: &PiAttribution, AttributionOff: true}); len(headers) != 0 {
+		t.Fatalf("off headers = %v", headers)
+	}
+}
+
+func TestNvidiaAttributionMultibyteName(t *testing.T) {
+	headers := AttributionHeaders(identityTarget("nvidia", "https://example.test/v1"), &ClientIdentity{Attribution: &ClientAttribution{Name: "名前"}})
+	if headers["X-BILLING-INVOKE-ORIGIN"] != "名前" {
+		t.Fatalf("origin = %q", headers["X-BILLING-INVOKE-ORIGIN"])
+	}
+}
+
+func TestBuildBaseOptionsCarriesIdentity(t *testing.T) {
+	model := &Model{ID: "m", Provider: "p", ContextWindow: 1000, MaxTokens: 100}
+	identity := &ClientIdentity{Version: "9.9.9"}
+	options := BuildBaseOptions(model, &TranscriptContext{}, &SimpleStreamOptions{StreamOptions: StreamOptions{Identity: identity}}, "")
+	if options.Identity != identity {
+		t.Fatalf("identity = %+v", options.Identity)
+	}
+}

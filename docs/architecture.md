@@ -2,11 +2,11 @@
 
 English | [中文](architecture.zh.md)
 
-How openagent composes and where behavior extends. Rationale lives in [Agent Notes](../.agents/notes/README.md); per-module detail in [module pages](modules/README.md); the port inventory in [PORTING.md](../PORTING.md) and [PARITY.md](../PARITY.md).
+How openagent composes and where behavior extends; rationale in [Agent Notes](../.agents/notes/README.md), per-module detail in [module pages](modules/README.md), port inventory in [PORTING.md](../PORTING.md) and [PARITY.md](../PARITY.md).
 
 ## Overview
 
-openagent is a Go 1:1 rewrite of pi's TypeScript agent stack (`agent` v0.87.1 with its `ai`, `chord`, and `telemetry` closures, plus the `coding-agent` CLI and its `tui` dependency; commit `ff72faba2`). Packages mirror the source in name and behavior; npm dependencies become standalone Go packages; layering matches the reference.
+openagent is a Go 1:1 rewrite of pi's TypeScript agent stack (`agent` v0.87.1 with its `ai`, `chord`, and `telemetry` closures, plus the `coding-agent` CLI and its `tui` dependency; commit `ff72faba2`).
 
 ## Module map
 
@@ -20,7 +20,7 @@ ignore/       npm ignore 7.0.8 semantics
 telemetry/    Span contract, NOOP / in-memory contexts
 chord/        JSON contracts, context/, delta/, services/
 ai/           Types, streaming, retry, catalog, providers
-agent/        Agent loop, proxy, search, harness/ (session, runtime, compaction), tools
+agent/        Agent loop, proxy, search, harness/ (session, runtime, compaction, tasks), tools
 tui/          pi-tui port: components, keys, diff renderer ([module](modules/tui.md))
 codingagent/  coding-agent CLI port: sessions, tools, modes ([module](modules/codingagent.md))
 cmd/          openagent / openagent-rpc binaries
@@ -30,7 +30,7 @@ examples/     Runnable example agents
 
 ## Core flows
 
-- **Provider stream:** a turn calls an `ai` provider over the HTTP/SSE seam (`http_sse.go`); codec, retry, and transcript shape the abort-aware events into messages.
+- **Provider stream:** a turn calls an `ai` provider over the HTTP/SSE seam (`http_sse.go`); codec, retry, and transcript shape abort-aware events into messages.
 - **Agent loop:** turn → model events → tool calls → tool results → next turn, until a final message or abort.
 - **Coding agent:** `codingagent` drives the ported agent loop with its own sessions (JSONL), tools, compaction, and extension runner across print, JSON-event, RPC, and interactive modes.- **State delta:** `chord/delta` ops apply over the `jsonx` model, keeping ordering and number formatting JavaScript-identical.
 
@@ -41,9 +41,10 @@ examples/     Runnable example agents
 - **Extensions:** `codingagent`'s extension API is Go-native; runtime TypeScript loading is a documented deviation (PARITY.md).
 - **Telemetry:** span schemas via `telemetry/` contexts; NOOP and in-memory ship.
 - **Trajectory & compaction:** run records via `trajectory/`; checkpoint summaries via `agent/harness/compaction` ([trajectory](modules/trajectory.md), [compaction](modules/compaction.md)).
+- **Automated tasks:** cron/every/at prompt injection into agent sessions via `agent/harness/tasks`, composed externally ([tasks](modules/tasks.md)).
 
 ## Invariants
 
-- JSON crossing package boundaries goes through `jsonx` / `chord`, preserving JS semantics: insertion order, number formatting.
+- Cross-package JSON goes through `jsonx` / `chord`, preserving JS semantics: insertion order, number formatting.
 - Cancellation propagates from controller to provider stream; aborted paths leak no work.
 - Ported behavior is pinned by golden tests against the npm and pi references; deviation is a defect.

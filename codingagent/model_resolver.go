@@ -189,33 +189,6 @@ type ParseModelOptions struct {
 	AllowInvalidThinkingLevelFallback *bool
 }
 
-func buildFallbackModel(provider, modelID string, availableModels []*ai.Model) *ai.Model {
-	var providerModels []*ai.Model
-	for _, model := range availableModels {
-		if model.Provider == provider {
-			providerModels = append(providerModels, model)
-		}
-	}
-	if len(providerModels) == 0 {
-		return nil
-	}
-
-	baseModel := providerModels[0]
-	if defaultID, ok := DefaultModelPerProvider[provider]; ok {
-		for _, model := range providerModels {
-			if model.ID == defaultID {
-				baseModel = model
-				break
-			}
-		}
-	}
-
-	fallback := *baseModel
-	fallback.ID = modelID
-	fallback.Name = modelID
-	return &fallback
-}
-
 // ParseModelPattern matches a pattern, splitting trailing :thinking levels.
 func ParseModelPattern(pattern string, availableModels []*ai.Model, options *ParseModelOptions) ParsedModelResult {
 	if exactMatch := tryMatchModel(pattern, availableModels); exactMatch != nil {

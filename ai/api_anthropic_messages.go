@@ -926,7 +926,7 @@ func getAnthropicCacheControl(model *Model, cacheRetention *string, env Provider
 	return jsonx.ObjFrom("type", "ephemeral")
 }
 
-func buildAnthropicParams(model *Model, context *TranscriptContext, isOAuthToken bool, options *AnthropicOptions, disablePreferredStrictTools bool) *jsonx.Obj {
+func buildAnthropicParams(model *Model, context *TranscriptContext, isOAuthToken bool, options *AnthropicOptions, disablePreferredStrictTools bool) (*jsonx.Obj, bool) {
 	var cacheRetention *string
 	var env ProviderEnv
 	if options != nil {
@@ -955,6 +955,7 @@ func buildAnthropicParams(model *Model, context *TranscriptContext, isOAuthToken
 		compat.SupportsMidConvoToolChanges &&
 		len(initialTools) > 0 &&
 		!HasToolRedefinitions(context.Messages)
+	hasPreferredStrictTools := false
 	thinkingDisabled := anthropicThinkingDisabled(model, options)
 	// Effort cannot change between messages while thinking is disabled, so
 	// "off" sends no effort markers.
@@ -1037,6 +1038,7 @@ func buildAnthropicParams(model *Model, context *TranscriptContext, isOAuthToken
 				laterTools = append(laterTools, tool)
 			}
 		}
+		hasPreferredStrictTools = anthropicHasPreferredStrictTools(initialTools, compat.SupportsStrictTools)
 		tools := append(
 			convertAnthropicTools(initialTools, isOAuthToken, compat.SupportsEagerToolInputStreaming, compat.SupportsStrictTools, toolCacheControl, disablePreferredStrictTools),
 			deferredToolPlaceholder(),
@@ -1052,6 +1054,7 @@ func buildAnthropicParams(model *Model, context *TranscriptContext, isOAuthToken
 		tools := GetCurrentTools(context.Messages)
 		if len(tools) > 0 {
 			params.Set("tools", convertAnthropicTools(tools, isOAuthToken, compat.SupportsEagerToolInputStreaming, compat.SupportsStrictTools, toolCacheControl, disablePreferredStrictTools))
+			hasPreferredStrictTools = anthropicHasPreferredStrictTools(tools, compat.SupportsStrictTools)
 		}
 	}
 
@@ -1119,7 +1122,7 @@ func buildAnthropicParams(model *Model, context *TranscriptContext, isOAuthToken
 		params.Set("fallbacks", fallbackParams)
 	}
 
-	return params
+	return params, hasPreferredStrictTools
 }
 
 func thinkingEnabled(options *AnthropicOptions) bool {

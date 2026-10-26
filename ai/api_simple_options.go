@@ -35,6 +35,7 @@ func BuildBaseOptions(model *Model, context *TranscriptContext, options *SimpleS
 	resolved := &StreamOptions{
 		Signal:                    base.Signal,
 		Telemetry:                 base.Telemetry,
+		Identity:                  base.Identity,
 		APIKey:                    base.APIKey,
 		Fetch:                     base.Fetch,
 		Env:                       base.Env,
@@ -159,16 +160,13 @@ func ResolveSamplingParams(model *Model, thinkingLevel string, requestParams map
 }
 
 // simpleReasoningLevel reads the scalar reasoning option from simple
-// options ("off" when unset).
+// options ("off" when unset); the embedded field is the single source.
 func simpleReasoningLevel(options *SimpleStreamOptions) string {
 	if options == nil {
 		return ThinkingOff
 	}
 	if options.Reasoning != nil {
 		return *options.Reasoning
-	}
-	if options.StreamOptions.Reasoning != nil {
-		return *options.StreamOptions.Reasoning
 	}
 	return ThinkingOff
 }

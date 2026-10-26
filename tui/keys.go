@@ -643,7 +643,7 @@ func matchesPrintableModifyOtherKeys(data string, expectedKeycode, expectedModif
 	if physicalMatch {
 		return true
 	}
-	code, modifier, ok := logicalShiftedSymbolCandidate(parsed.codepoint, parsed.modifier, symbolKeys)
+	code, modifier, ok := logicalShiftedSymbolCandidate(parsed.codepoint, parsed.modifier, shiftedSymbolKeys)
 	return ok && modifier == expectedModifier && code == expectedKeycode
 }
 

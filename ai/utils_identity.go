@@ -168,7 +168,7 @@ func isOpenCodeTarget(model *Model) bool {
 // AttributionHeaders returns the provider attribution headers of an
 // identity for a request target; empty when attribution is off.
 func AttributionHeaders(model *Model, identity *ClientIdentity) map[string]string {
-	if identity == nil || identity.Attribution == nil {
+	if identity == nil || identity.Attribution == nil || identity.AttributionOff {
 		return map[string]string{}
 	}
 	attribution := identity.Attribution
@@ -185,8 +185,8 @@ func AttributionHeaders(model *Model, identity *ClientIdentity) map[string]strin
 	// NVIDIA expects a capitalized origin, such as `Pi`.
 	if isNvidiaNimTarget(model) {
 		name := attribution.Name
-		if name != "" {
-			name = strings.ToUpper(name[:1]) + name[1:]
+		if runes := []rune(name); len(runes) > 0 {
+			name = strings.ToUpper(string(runes[0])) + string(runes[1:])
 		}
 		return map[string]string{"X-BILLING-INVOKE-ORIGIN": name}
 	}
@@ -255,57 +255,57 @@ func (w *identityModels) GetAuth(modelOrProvider any) (*AuthResult, bool) {
 }
 
 func (w *identityModels) Stream(model *Model, context Context, options *StreamOptions) *AssistantMessageEventStream {
-	if options != nil {
-		merged := *options
-		merged.Identity = w.withIdentity(options.Identity)
-		options = &merged
+	if options == nil {
+		options = &StreamOptions{}
 	}
-	return w.inner.Stream(model, context, options)
+	merged := *options
+	merged.Identity = w.withIdentity(options.Identity)
+	return w.inner.Stream(model, context, &merged)
 }
 
 func (w *identityModels) StreamSimple(model *Model, context Context, options *SimpleStreamOptions) *AssistantMessageEventStream {
-	if options != nil {
-		merged := *options
-		merged.Identity = w.withIdentity(options.Identity)
-		options = &merged
+	if options == nil {
+		options = &SimpleStreamOptions{}
 	}
-	return w.inner.StreamSimple(model, context, options)
+	merged := *options
+	merged.Identity = w.withIdentity(options.Identity)
+	return w.inner.StreamSimple(model, context, &merged)
 }
 
 func (w *identityModels) Complete(model *Model, context Context, options *StreamOptions) (*AssistantMessage, error) {
-	if options != nil {
-		merged := *options
-		merged.Identity = w.withIdentity(options.Identity)
-		options = &merged
+	if options == nil {
+		options = &StreamOptions{}
 	}
-	return w.inner.Complete(model, context, options)
+	merged := *options
+	merged.Identity = w.withIdentity(options.Identity)
+	return w.inner.Complete(model, context, &merged)
 }
 
 func (w *identityModels) CompleteSimple(model *Model, context Context, options *SimpleStreamOptions) (*AssistantMessage, error) {
-	if options != nil {
-		merged := *options
-		merged.Identity = w.withIdentity(options.Identity)
-		options = &merged
+	if options == nil {
+		options = &SimpleStreamOptions{}
 	}
-	return w.inner.CompleteSimple(model, context, options)
+	merged := *options
+	merged.Identity = w.withIdentity(options.Identity)
+	return w.inner.CompleteSimple(model, context, &merged)
 }
 
 func (w *identityModels) FetchDeferred(model *Model, handle *DeferredHandle, options *DeferredFetchOptions) *AssistantMessageEventStream {
-	if options != nil {
-		merged := *options
-		merged.Identity = w.withIdentity(options.Identity)
-		options = &merged
+	if options == nil {
+		options = &DeferredFetchOptions{}
 	}
-	return w.inner.FetchDeferred(model, handle, options)
+	merged := *options
+	merged.Identity = w.withIdentity(options.Identity)
+	return w.inner.FetchDeferred(model, handle, &merged)
 }
 
 func (w *identityModels) CancelDeferred(model *Model, handle *DeferredHandle, options *DeferredCancelOptions) error {
-	if options != nil {
-		merged := *options
-		merged.Identity = w.withIdentity(options.Identity)
-		options = &merged
+	if options == nil {
+		options = &DeferredCancelOptions{}
 	}
-	return w.inner.CancelDeferred(model, handle, options)
+	merged := *options
+	merged.Identity = w.withIdentity(options.Identity)
+	return w.inner.CancelDeferred(model, handle, &merged)
 }
 
 // optionsIdentity extracts the request identity from an options struct

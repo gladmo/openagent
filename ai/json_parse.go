@@ -295,5 +295,7 @@ func OverflowPatternSources() []string {
 		`context[_ ]length[_ ]exceeded`,
 		`too many tokens`,
 		`token limit exceeded`,
+		// HTTP 413 means request-size overflow regardless of provider (#11167).
+		`^(?:[\w -]+ API error \(413\):|413(?:\s|:|$))`,
 	}
 }

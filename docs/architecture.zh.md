@@ -2,11 +2,11 @@
 
 [English](architecture.md) | 中文
 
-openagent 如何组合、行为在哪里扩展。决策依据存放在 [Agent Note](../.agents/notes/README.md)；模块细节在[模块页](modules/README.md)；逐文件移植清单在 [PORTING.md](../PORTING.md) 与 [PARITY.md](../PARITY.md)。
+openagent 如何组合、行为在哪里扩展；决策依据在 [Agent Note](../.agents/notes/README.md)，模块细节在[模块页](modules/README.md)，逐文件移植清单在 [PORTING.md](../PORTING.md) 与 [PARITY.md](../PARITY.md)。
 
 ## 总览
 
-openagent 是 pi 单仓库 TypeScript agent 技术栈（`agent` v0.87.1 及其 `ai`、`chord`、`telemetry` 闭包，外加 `coding-agent` CLI 及其 `tui` 依赖；提交 `ff72faba2`）的 Go 1:1 重写。各包在命名与行为上镜像源码；npm 依赖变成独立的 Go 包；分层与基准一致：基础库、chord、ai 提供方栈、agent 循环、终端 UI 库，以及顶层的 coding-agent 产品。
+openagent 是 pi 单仓库 TypeScript agent 技术栈（`agent` v0.87.1 及其 `ai`、`chord`、`telemetry` 闭包，外加 `coding-agent` CLI 及其 `tui` 依赖；提交 `ff72faba2`）的 Go 1:1 重写。
 
 ## 模块地图
 
@@ -20,7 +20,7 @@ ignore/       npm ignore 7.0.8 语义
 telemetry/    Span 契约，NOOP / 内存上下文
 chord/        JSON 契约、context/、delta/、services/
 ai/           类型、流式、重试、目录、提供方
-agent/        Agent 循环、代理、搜索、harness/（session、runtime、compaction）、工具
+agent/        Agent 循环、代理、搜索、harness/（session、runtime、compaction、tasks）、工具
 tui/          pi-tui 移植：颜色、按键、组件、差分渲染器（[模块](modules/tui.md)）
 codingagent/  pi coding-agent CLI 移植：会话、工具、扩展、模式（[模块](modules/codingagent.md)）
 cmd/          二进制入口：openagent、openagent-rpc
@@ -42,6 +42,7 @@ examples/     可运行的示例 agent
 - **扩展：** coding agent 的扩展 API 位于 `codingagent/core/extensions`（Go 原生；运行时 TypeScript 加载为已文档化偏差——见 PARITY.md）。
 - **遥测：** 经 `telemetry/` 上下文定义 span 模式；内置 NOOP 与内存实现。
 - **轨迹与压缩：** 运行记录见 `trajectory/`；检查点摘要见 `agent/harness/compaction`（[轨迹](modules/trajectory.zh.md)、[压缩](modules/compaction.zh.md)）。
+- **自动化任务：** cron/every/at 调度经 `agent/harness/tasks` 向 agent 会话注入 prompt，从外侧组合接入（[任务](modules/tasks.zh.md)）。
 
 ## 不变量
 

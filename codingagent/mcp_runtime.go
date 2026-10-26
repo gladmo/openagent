@@ -677,6 +677,12 @@ func (c *McpServerConnection) connectOnce() (*mcp.McpClient, error) {
 	c.mu.Unlock()
 	removeAbort := shutdown.Signal().OnAbort(func() { _ = client.Close() })
 	defer removeAbort()
+	// Shutdown may have aborted before the listener registered (OnAbort
+	// never fires post-abort); close immediately in that window.
+	if shutdown.Signal().Aborted() {
+		_ = client.Close()
+		return nil, errors.New("shut down while connecting")
+	}
 	if _, err := client.Connect(transport); err != nil {
 		_ = client.Close()
 		if stdio, isStdio := transport.(*mcp.StdioTransport); isStdio {
@@ -803,12 +809,15 @@ func (c *McpServerConnection) refreshTools(client *mcp.McpClient) {
 // Close shuts the connection down.
 func (c *McpServerConnection) Close() error {
 	c.mu.Lock()
-	c.shutdown.Abort()
 	c.state = McpServerClosed
 	client := c.client
 	c.client = nil
 	opening := c.opening
+	shutdown := c.shutdown
 	c.mu.Unlock()
+	// Abort outside the lock: the abort listeners run synchronously and one
+	// closes the connecting client, whose OnClose handler re-enters c.mu.
+	shutdown.Abort()
 	c.changed()
 	if client != nil {
 		_ = client.Close()

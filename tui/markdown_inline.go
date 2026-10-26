@@ -343,7 +343,7 @@ func mdMatchDelimited(src, marker string) (string, int, bool) {
 					}
 					nextIdx := i + mLen
 					_ = nextIdx
-					return string(content), i + mLen, true
+					return string(content), len(string(content)) + mLen*2, true
 				}
 				content = append(content, runes[i:i+mLen]...)
 				i += mLen

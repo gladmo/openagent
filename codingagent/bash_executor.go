@@ -235,13 +235,14 @@ func SplitIncompleteAnsiSuffix(value string) (complete, pending string) {
 	}
 	window := value[windowStart:]
 	splitAt := -1
-	for index := 0; index < len(window); index++ {
-		switch window[index] {
-		case '\x1b', '\x9b':
-			if span, unfinished := unfinishedSequenceLength(window[index:]); unfinished && index+span == len(window) {
-				splitAt = index
+	consumed := 0
+	for _, r := range window {
+		if r == '\x1b' || r == '\x9b' {
+			if span, unfinished := unfinishedSequenceLength(window[consumed:]); unfinished && consumed+span == len(window) {
+				splitAt = consumed
 			}
 		}
+		consumed += utf8.RuneLen(r)
 	}
 	if splitAt == -1 {
 		return value, ""
@@ -250,48 +251,58 @@ func SplitIncompleteAnsiSuffix(value string) (complete, pending string) {
 }
 
 // unfinishedSequenceLength reports how many bytes the escape sequence at
-// the start of window spans, and whether it lacks its terminator. A
-// trailing ESC inside an OSC may start the ESC\\ terminator, so the
-// sequence stays unfinished from that ESC.
+// the start of window spans, and whether it lacks its terminator. The scan
+// is rune-based: the decoded text is valid UTF-8, so 0x9B/0x9C only appear
+// as their own control runes, never as continuation bytes. A trailing ESC
+// inside an OSC may start the ESC\\ terminator, so the whole window stays
+// unfinished.
 func unfinishedSequenceLength(window string) (int, bool) {
-	if len(window) >= 2 && window[0] == '\x1b' && window[1] == ']' {
-		for index := 2; index < len(window); index++ {
-			switch window[index] {
+	runes := []rune(window)
+	if len(runes) >= 2 && runes[0] == '\x1b' && runes[1] == ']' {
+		for index := 2; index < len(runes); index++ {
+			switch runes[index] {
 			case '\x07', '\x9c':
-				return index + 1, false
+				return byteLength(runes[:index+1]), false
 			case '\x1b':
-				if index+1 < len(window) && window[index+1] == '\\' {
-					return index + 2, false
+				if index+1 < len(runes) && runes[index+1] == '\\' {
+					return byteLength(runes[:index+2]), false
 				}
 				// A bare ESC is a legal body character (the TS body class
 				// only excludes it when it starts the ST); keep scanning,
 				// and hold the whole unterminated OSC when the window ends.
-				if index == len(window)-1 {
-					return index, true
-				}
+				return byteLength(runes), true
 			}
 		}
-		return len(window), true
+		return byteLength(runes), true
 	}
 	index := 1
-	if window[0] == '\x1b' {
-		if len(window) < 2 || window[1] != '[' {
-			if len(window) == 1 {
+	if runes[0] == '\x1b' {
+		if len(runes) < 2 || runes[1] != '[' {
+			if len(runes) == 1 {
 				return 1, true
 			}
-			return 2, false
+			return byteLength(runes[:2]), false
 		}
 		index = 2
 	}
-	for index < len(window) {
-		b := window[index]
+	for index < len(runes) {
+		b := runes[index]
 		if b >= 0x40 && b <= 0x7e {
-			return index + 1, false
+			return byteLength(runes[:index+1]), false
 		}
 		if b == '\x1b' || b == '\x07' || b == '\x9c' {
-			return index, false
+			return byteLength(runes[:index]), false
 		}
 		index++
 	}
-	return len(window), true
+	return byteLength(runes), true
+}
+
+// byteLength is the byte width of a rune slice.
+func byteLength(runes []rune) int {
+	total := 0
+	for _, r := range runes {
+		total += utf8.RuneLen(r)
+	}
+	return total
 }

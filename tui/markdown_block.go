@@ -226,51 +226,51 @@ func mdLooksLikePendingDollarMath(source string) bool {
 // mdLexBlockLatex recognizes latex blocks starting at lines[pos]. When the
 // match ends mid-line, the remainder of that line is returned so the caller
 // reprocesses it.
-func mdLexBlockLatex(lines []string, pos int) *mdLatexResult {
-	source := strings.Join(lines[pos:], "\n")
-	build := func(consumed, text string, pending bool) *mdLatexResult {
-		next, remainder := mdAdvanceLines(lines, pos, consumed, pending)
-		return &mdLatexResult{
-			token:     MdLatexBlock{Text: text, Raw: mdTrimLastNewline(consumed), Pending: pending},
-			next:      next,
-			remainder: remainder,
-		}
-	}
-	// Display math never spans a table. Without this check, an unclosed
-	// "$$" or "\[" pairs with a later opener or stays pending, swallowing
-	// the table (#11159).
+// mdLatexMatch is the shared display-math match used by both the lexer and
+// the paragraph-boundary check; the two must never drift apart.
+type mdLatexMatch struct {
+	consumed string
+	content  string
+	pending  bool
+}
+
+// mdMatchBlockLatex reports the first display-math form in source, or nil.
+// Display math never spans a table: without that check, an unclosed "$$" or
+// "\[" pairs with a later opener or stays pending, swallowing the table
+// (#11159).
+func mdMatchBlockLatex(source string) *mdLatexMatch {
 	if match := mdBlockLatexDollar.FindStringSubmatch(source); match != nil && strings.TrimSpace(match[1]) != "" && mdBlockLatexEndsLine(source, match[0]) && !mdContainsTableStart(match[1]) {
-		return build(match[0], strings.TrimSpace(match[1]), false)
+		return &mdLatexMatch{consumed: match[0], content: strings.TrimSpace(match[1])}
 	}
 	if match := mdBlockLatexBracket.FindStringSubmatch(source); match != nil && strings.TrimSpace(match[1]) != "" && !mdContainsTableStart(match[1]) {
-		return build(match[0], strings.TrimSpace(match[1]), false)
+		return &mdLatexMatch{consumed: match[0], content: strings.TrimSpace(match[1])}
 	}
 	if match := mdBlockLatexPendBrk.FindStringSubmatch(source); match != nil && !mdContainsTableStart(match[1]) {
-		return build(match[0], match[1], true)
+		return &mdLatexMatch{consumed: match[0], content: match[1], pending: true}
 	}
 	if match := mdBlockLatexPendDol.FindStringSubmatch(source); match != nil && mdLooksLikePendingDollarMath(match[1]) && !mdContainsTableStart(match[1]) {
-		return build(match[0], match[1], true)
+		return &mdLatexMatch{consumed: match[0], content: match[1], pending: true}
 	}
 	return nil
+}
+
+func mdLexBlockLatex(lines []string, pos int) *mdLatexResult {
+	match := mdMatchBlockLatex(strings.Join(lines[pos:], "\n"))
+	if match == nil {
+		return nil
+	}
+	next, remainder := mdAdvanceLines(lines, pos, match.consumed, match.pending)
+	return &mdLatexResult{
+		token:     MdLatexBlock{Text: match.content, Raw: mdTrimLastNewline(match.consumed), Pending: match.pending},
+		next:      next,
+		remainder: remainder,
+	}
 }
 
 // mdBlockLatexStartsAt reports whether a latex block token starts on the
 // line (paragraph boundary check; no consumption).
 func mdBlockLatexStartsAt(lines []string, pos int) bool {
-	source := strings.Join(lines[pos:], "\n")
-	if match := mdBlockLatexDollar.FindStringSubmatch(source); match != nil && strings.TrimSpace(match[1]) != "" && mdBlockLatexEndsLine(source, match[0]) && !mdContainsTableStart(match[1]) {
-		return true
-	}
-	if match := mdBlockLatexBracket.FindStringSubmatch(source); match != nil && strings.TrimSpace(match[1]) != "" && !mdContainsTableStart(match[1]) {
-		return true
-	}
-	if match := mdBlockLatexPendBrk.FindStringSubmatch(source); match != nil && !mdContainsTableStart(match[1]) {
-		return true
-	}
-	if match := mdBlockLatexPendDol.FindStringSubmatch(source); match != nil && mdLooksLikePendingDollarMath(match[1]) && !mdContainsTableStart(match[1]) {
-		return true
-	}
-	return false
+	return mdMatchBlockLatex(strings.Join(lines[pos:], "\n")) != nil
 }
 
 func mdTrimLastNewline(s string) string {

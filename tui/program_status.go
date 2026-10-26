@@ -28,9 +28,12 @@ type ProgramStatus struct {
 	Message string `json:"message,omitempty"`
 }
 
+// programStatusQueryBody is the query body a supporting terminal echoes.
+const programStatusQueryBody = "7501;?"
+
 // ProgramStatusQuery is the feature detection query; a supporting terminal
 // replies with the same body.
-const ProgramStatusQuery = "\x1b]7501;?\x1b\\"
+const ProgramStatusQuery = "\x1b]" + programStatusQueryBody + "\x1b\\"
 
 // programStatusReplyPattern matches the reply to ProgramStatusQuery. Later
 // spec revisions may add pairs after the "?".
@@ -56,17 +59,19 @@ func truncateProgramStatusUTF8(text string, maxBytes int) string {
 	bytes := 0
 	end := 0
 	for index, char := range text {
-		// Range reports invalid bytes as RuneError at width 1; derive the
-		// width from the index delta so the cut never splits a sequence.
-		next := index + utf8.RuneLen(char)
-		if char == utf8.RuneError && next > len(text) {
-			next = index + 1
+		width := utf8.RuneLen(char)
+		if char == utf8.RuneError {
+			// Range reports invalid bytes as RuneError; only a literal
+			// U+FFFD has width 3, others are single bytes.
+			if !(index+3 <= len(text) && text[index:index+3] == string(utf8.RuneError)) {
+				width = 1
+			}
 		}
-		if bytes+(next-index) > maxBytes {
+		if bytes+width > maxBytes {
 			break
 		}
-		bytes += next - index
-		end = next
+		bytes += width
+		end = index + width
 	}
 	return text[:end]
 }

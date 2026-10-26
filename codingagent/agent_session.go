@@ -184,17 +184,7 @@ func (s *AgentSession) Dispose() {
 func (s *AgentSession) buildRuntime() {
 	// Register the built-in tool definitions (the reference's
 	// createAllToolDefinitions set and key order).
-	definitions := []*ToolDefinition{
-		CreateReadToolDefinition(s.cwd, s.readToolOptions()),
-		CreateBashToolDefinition(s.cwd, s.bashToolOptions()),
-		CreatePowerShellToolDefinition(s.cwd, nil),
-		CreateEditToolDefinition(s.cwd, nil),
-		CreateWriteToolDefinition(s.cwd, nil),
-		CreateGrepToolDefinition(s.cwd, nil),
-		CreateFindToolDefinition(s.cwd, nil),
-		CreateLsToolDefinition(s.cwd, nil),
-	}
-	definitions = append(definitions, s.customTools...)
+	definitions := append(s.builtinToolDefinitions(), s.customTools...)
 
 	for _, definition := range definitions {
 		if s.allowedToolNames != nil && !s.allowedToolNames(definition.Name) {
@@ -250,6 +240,7 @@ func (s *AgentSession) restoreToolsFromTranscript() {
 		return
 	}
 	declared := map[string]bool{}
+	mentioned := map[string]bool{}
 	var order []string
 	sawSystem := false
 	for _, projected := range s.SessionManager.BuildSessionProjectionFromLeaf().Entries {
@@ -272,6 +263,9 @@ func (s *AgentSession) restoreToolsFromTranscript() {
 			}
 			for _, tool := range probe.ToolsRemoved {
 				delete(declared, tool.Name)
+				if tool.Name != "" {
+					mentioned[tool.Name] = true
+				}
 			}
 			for _, tool := range probe.ToolsAdded {
 				if tool.Name == "" {
@@ -281,6 +275,7 @@ func (s *AgentSession) restoreToolsFromTranscript() {
 					order = append(order, tool.Name)
 				}
 				declared[tool.Name] = true
+				mentioned[tool.Name] = true
 			}
 		}
 	}
@@ -303,7 +298,9 @@ func (s *AgentSession) restoreToolsFromTranscript() {
 	}
 	for _, definition := range s.customTools {
 		name := definition.Name
-		if _, mentioned := declared[name]; mentioned || builtinNames[name] {
+		// "Mentioned" covers added AND removed: a tool the branch explicitly
+		// removed must not come back as newly registered.
+		if mentioned[name] || builtinNames[name] {
 			continue
 		}
 		if definition.DefaultActive != nil && !*definition.DefaultActive {
@@ -314,9 +311,28 @@ func (s *AgentSession) restoreToolsFromTranscript() {
 	s.SetActiveToolsByName(names)
 }
 
-// builtinToolNames lists the built-in tool set in registration order.
+// builtinToolDefinitions is the single source of the built-in tool set, in
+// registration order; builtinToolNames derives from it.
+func (s *AgentSession) builtinToolDefinitions() []*ToolDefinition {
+	return []*ToolDefinition{
+		CreateReadToolDefinition(s.cwd, s.readToolOptions()),
+		CreateBashToolDefinition(s.cwd, s.bashToolOptions()),
+		CreatePowerShellToolDefinition(s.cwd, nil),
+		CreateEditToolDefinition(s.cwd, nil),
+		CreateWriteToolDefinition(s.cwd, nil),
+		CreateGrepToolDefinition(s.cwd, nil),
+		CreateFindToolDefinition(s.cwd, nil),
+		CreateLsToolDefinition(s.cwd, nil),
+	}
+}
+
 func (s *AgentSession) builtinToolNames() []string {
-	return []string{"read", "bash", "powershell", "edit", "write", "grep", "find", "ls"}
+	definitions := s.builtinToolDefinitions()
+	names := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
+		names = append(names, definition.Name)
+	}
+	return names
 }
 
 // registerToolDefinition adds one definition to the registry.

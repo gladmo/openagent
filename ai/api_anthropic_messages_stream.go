@@ -238,9 +238,11 @@ func (a *AnthropicMessagesAPI) run(
 	disablePreferredStrictTools := false
 	var sse *SSEStreamResponse
 	for {
-		params := buildAnthropicParams(model, normalizedContext, isOAuth, options, disablePreferredStrictTools)
-		hasPreferredStrictTools := !disablePreferredStrictTools &&
-			anthropicHasPreferredStrictTools(GetCurrentTools(normalizedContext.Messages), getAnthropicCompat(model).SupportsStrictTools)
+		// hasPreferredStrictTools comes from the params build itself, so it
+		// reflects the exact tool set the request sends (deferred-tools
+		// loads carry the initial declarations).
+		params, hasPreferredStrictTools := buildAnthropicParams(model, normalizedContext, isOAuth, options, disablePreferredStrictTools)
+		hasPreferredStrictTools = !disablePreferredStrictTools && hasPreferredStrictTools
 		if options != nil && options.OnPayload != nil {
 			if next := options.OnPayload(params, model); next != nil {
 				if obj, ok := JxObj(next); ok {

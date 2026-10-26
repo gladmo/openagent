@@ -1283,18 +1283,27 @@ func buildOpenAICompletionsParams(
 		}
 	}
 
-	// Last so custom keys override named request fields; per-request keys
-	// override model defaults.
-	for name, value := range model.SamplingParams {
-		params.Set(name, value)
+	// Last so model and request sampling parameters override named request
+	// fields, selected by the effective thinking level (#9776).
+	level := ThinkingOff
+	if options != nil && options.ReasoningEffort != nil {
+		level = *options.ReasoningEffort
 	}
-	if options != nil {
-		for name, value := range options.SamplingParams {
+	if samplingParams := ResolveSamplingParams(model, level, completionsRequestSamplingParams(options)); samplingParams != nil {
+		for name, value := range samplingParams {
 			params.Set(name, value)
 		}
 	}
 
 	return params
+}
+
+// completionsRequestSamplingParams reads the request sampling params.
+func completionsRequestSamplingParams(options *OpenAICompletionsOptions) map[string]any {
+	if options == nil {
+		return nil
+	}
+	return options.SamplingParams
 }
 
 func budgetPtr(budget float64, ok bool) *float64 {
@@ -1378,15 +1387,6 @@ func mapOpenAIStopReason(reason string) (string, *string) {
 		message := "Provider finish_reason: " + reason
 		return StopError, &message
 	}
-}
-
-// optionsSamplingParams reads the request sampling params from completions
-// options.
-func optionsSamplingParams(options *OpenAICompletionsOptions) map[string]any {
-	if options == nil {
-		return nil
-	}
-	return options.SamplingParams
 }
 
 // completionsToolSupport mirrors the completions transports' support:

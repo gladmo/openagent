@@ -13,7 +13,6 @@ import (
 
 	"os"
 	"os/signal"
-	"syscall"
 )
 
 var cellSizeResponsePattern = regexp.MustCompile(`^\x1b\[6;(\d+);(\d+)t$`)
@@ -594,7 +593,7 @@ func (t *TuiBase) installExitRestore() {
 		return
 	}
 	channel := make(chan os.Signal, 1)
-	signal.Notify(channel, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	signal.Notify(channel, exitRestoreSignalSet()...)
 	t.exitRestoreSignals = channel
 	go func() {
 		received, ok := <-channel
@@ -602,12 +601,18 @@ func (t *TuiBase) installExitRestore() {
 			return
 		}
 		t.restoreTerminalForExit()
+		// A signal that outlived Stop was already handled by the graceful
+		// shutdown path; dropping it lets a host handler own the lifecycle.
+		t.mu.Lock()
+		stopped := t.stoppedFlag
+		t.mu.Unlock()
+		if stopped {
+			return
+		}
 		// Re-raise with the default disposition so the exit status the
 		// parent observes matches the signal.
-		signal.Reset(syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-		if signaled, isSignal := received.(syscall.Signal); isSignal {
-			_ = syscall.Kill(syscall.Getpid(), signaled)
-		}
+		resetExitRestoreSignals()
+		reraiseExitRestoreSignal(received)
 		os.Exit(128)
 	}()
 }
@@ -622,18 +627,21 @@ func (t *TuiBase) disposeExitRestore() {
 
 func (t *TuiBase) restoreTerminalForExit() {
 	// The override hook lets embedding screens (TuiAltScreen) contribute
-	// their mode resets; it is set while t.mu is held and only read here,
-	// so it needs no extra locking. The caller of this function may be a
-	// signal handler racing anything, so the hook must not lock.
-	t.mu.Lock()
-	stopped := t.stoppedFlag
+	// their mode resets. A render or Stop holding t.mu over a stalled
+	// terminal write must not make the process unkillable: TryLock, and
+	// fall back to the terminal's own mode resets (empty before/after)
+	// when the lock is unavailable.
 	var prefix, suffix string
-	if t.exitRestoreOverride != nil {
-		prefix, suffix = t.exitRestoreOverride()
-	} else {
-		prefix, suffix = t.ExitRestorePrefix(), t.ExitRestoreSuffix()
+	stopped := false
+	if t.mu.TryLock() {
+		stopped = t.stoppedFlag
+		if t.exitRestoreOverride != nil {
+			prefix, suffix = t.exitRestoreOverride()
+		} else {
+			prefix, suffix = t.ExitRestorePrefix(), t.ExitRestoreSuffix()
+		}
+		t.mu.Unlock()
 	}
-	t.mu.Unlock()
 	if stopped {
 		return
 	}

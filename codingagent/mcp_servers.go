@@ -673,7 +673,10 @@ func GetToolListError(entries []string) string {
 // ApplyToolModifiers applies the +name/-name entries of entries to base in
 // order: +name adds a tool, -name removes one. Other entries are ignored.
 func ApplyToolModifiers(base, entries []string) []string {
-	tools := append([]string(nil), base...)
+	// A fresh non-nil slice keeps an empty base distinguishable from
+	// "no selection" for callers that check slice nilness.
+	tools := make([]string, 0, len(base)+len(entries))
+	tools = append(tools, base...)
 	for _, entry := range entries {
 		if !IsToolModifier(entry) {
 			continue

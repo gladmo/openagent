@@ -840,9 +840,17 @@ func stdinIsTTY() bool {
 // "" (cancelling the sign-in) after the timeout, or when the callback
 // arrived.
 func mcpWaitForRedirectURL(signal *abort.Signal, interactive bool) (string, error) {
+	if signal != nil && signal.Aborted() {
+		// OnAbort never fires post-abort; an already-cancelled sign-in
+		// returns immediately.
+		return "", nil
+	}
 	controller := abort.NewController()
 	remove := signal.OnAbort(controller.Abort)
 	defer remove()
+	if signal.Aborted() {
+		return "", nil
+	}
 	if !interactive {
 		<-controller.Signal().Done()
 		return "", nil

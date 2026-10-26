@@ -161,10 +161,8 @@ func TestResolveModelScopePartialWithLevel(t *testing.T) {
 }
 
 func TestBuildFallbackModel(t *testing.T) {
-	models := resolverTestModels()
-
 	// Unknown id on a known provider builds a custom model from the default.
-	fallback := buildFallbackModel("anthropic", "claude-future-9", models)
+	fallback := buildFallbackModelFromList([]*ai.Model{referenceModel("anthropic", "claude-sonnet-4-5")}, "claude-future-9")
 	if fallback == nil || fallback.ID != "claude-future-9" || fallback.Name != "claude-future-9" {
 		t.Fatalf("fallback = %+v", fallback)
 	}
@@ -173,7 +171,7 @@ func TestBuildFallbackModel(t *testing.T) {
 	}
 
 	// Unknown provider yields nil.
-	if fallback := buildFallbackModel("no-such-provider", "x", models); fallback != nil {
+	if fallback := buildFallbackModelFromList(nil, "x"); fallback != nil {
 		t.Fatalf("unknown provider = %+v", fallback)
 	}
 }

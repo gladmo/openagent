@@ -3696,3 +3696,54 @@ Remaining ocr findings NOT fixed this round (tracked for follow-up): SessionMana
   (incl. the argument-hint [file] -> []any pin). go.sum deleted (empty
   after tidy); GOPROXY=off build + tests green. Decision + alternatives
   in Agent Note vendor-yaml-v3.
+
+## AUTOMATED TASKS ROUND (agent/harness/tasks — openagent-native)
+
+- agent/harness/tasks/: time-based automated-task scheduler (cron /
+  every / at), same provenance class as trajectory/ and compaction/
+  (openagent-native, not a 1:1 port); decision record in
+  .agents/notes/implemented/architecture/
+  2026-10-25-harness-tasks-automated-scheduling.md. No codingagent or
+  agent-loop changes; composition seams are AgentExecutorOptions
+  factories, AgentSessionConfig.Agent, and CustomTools via
+  codingagent.CreateToolDefinitionFromAgentTool.
+- schedule.go + schedule_cron.go: Schedule seam (Next/String); Every
+  anchored at registration (drift-free grid), At one-shot, ParseSchedule
+  5-field cron + @descriptors. Cron grammar is the robfig/cron v3.0.0
+  5-field subset self-implemented (names, lists, ranges, steps, `?` in
+  day fields, @every duration, both-day-fields-restricted OR, 4-year
+  window; seconds fields and Quartz L/W/# rejected loud); golden
+  vectors in schedule_cron_test.go pin the reference behavior.
+- spec.go/run.go: TaskSpec (+discriminant-union schedule JSON codec,
+  fixed-zone location names round-trip), loud Validate; TaskRun state
+  machine (running persisted transiently; success/failed/skipped/
+  interrupted terminal).
+- store.go: JSONL FileStore, one TaskRecord per line, atomic whole-file
+  replace via temp+rename, per-line load degradation as StoreIssues;
+  MemoryStore for tests.
+- executor.go: Executor seam (Fire/RunResult); AgentExecutor drives
+  agent.Agent via PromptText/Abort/WaitForIdle/IsStreaming only —
+  new strategy gets a fresh UUIDv7 session id, fixed strategy restores
+  via LoadAgent with process cache; BusyPolicy wait (serialize on the
+  session, ctx-bounded) or skip; timeout aborts and reports failed/
+  interrupted after CancelGrace; provider failures map through the
+  synthetic error assistant message; usage tokens from the last
+  assistant.
+- scheduler.go + events.go: single loop goroutine, per-task next +
+  wake channel, missed fires skipped (next always from now, one
+  catch-up fire per late wake), per-task overlap and global
+  MaxConcurrentRuns refused as recorded skipped runs, HistoryLimit
+  trimming, MaxRuns/at completion (derived), Start marks orphaned
+  running runs interrupted, Stop drains then cancels; events
+  (registered/updated/deleted/paused/resumed/fired/run_started/
+  run_skipped/run_finished/store_degraded) emitted outside the
+  scheduler lock with disposer-returning OnEvent.
+- tool.go: task_manage AgentTool (create/list/get/update/pause/resume/
+  run/delete) as a thin Scheduler wrapper.
+- examples: scheduled_agent (plain-agent composition, echo stream,
+  fixed accumulation vs new isolation, -real provider switch),
+  scheduled_codingagent (AgentSessionConfig.Agent + CustomTools wiring,
+  scheduled injections serialized with a simulated user turn).
+- Docs: modules/tasks(.zh).md; architecture map + extension-point
+  line (.md/.zh); Agent Note pair. gofmt/vet clean; package + examples
+  tests green (incl. -race).

@@ -265,12 +265,8 @@ func convertResponsesMessages(
 		if toolSupport != ToolSupportAdditions {
 			return
 		}
-		if !opts.SupportsToolSearch {
-			return
-		}
-		if !opts.SupportsToolSearch {
-			return
-		}
+		// Additions implies the tool-search transport (see
+		// GetResponsesToolSupport).
 		names := make([]string, 0, len(tools))
 		for _, tool := range tools {
 			names = append(names, tool.Name)
