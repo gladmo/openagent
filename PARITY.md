@@ -57,7 +57,7 @@
 
 ## agent 根（P4）✅ 全量
 
-`pi/packages/agent` 根 → `agent/`：types、stream_fn、agent_loop（runLoop 时序）、agent（Agent 类）、proxy（SSE 客户端）、search。
+`pi/packages/agent` 根 → `agent/`：types、stream_fn、agent_loop（runLoop 时序）、agent（Agent 类）、proxy（SSE 客户端）、search（参考在 ff72faba2 处仅 27 行抽象接口、无实现且全树零消费者，后续 bd3c9b823 已随实验性 harness 删除；Go 侧 1:1 port 契约，可选 `searchEntries?` 以 `EntrySearchCapable` 能力接口映射；曾偏离参考形状，已修正并钉 JSON 形状测试）。
 
 ## harness 顶层 + tools + env（P5）✅ 全量
 

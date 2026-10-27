@@ -236,9 +236,15 @@ func TestSchedulerMaxRunsCompletesTask(t *testing.T) {
 	if err := scheduler.Register(spec); err != nil {
 		t.Fatalf("register: %v", err)
 	}
+	// Completed flips on RunCount >= MaxRuns at run START, so the final
+	// run may still be in flight (Running=true) when Completed first
+	// reads true. Wait for the terminal state before sampling the fire
+	// baseline, or the in-flight run lands during the sleep and looks
+	// like an extra fire.
 	waitFor(t, "completion", func() bool {
 		status, err := scheduler.Get("once")
-		return err == nil && status.Completed
+		return err == nil && status.Completed && !status.Running &&
+			status.LastRun != nil && status.LastRun.Status.Terminal()
 	})
 	status, _ := scheduler.Get("once")
 	if status.NextFire != nil {
@@ -248,6 +254,62 @@ func TestSchedulerMaxRunsCompletesTask(t *testing.T) {
 	time.Sleep(120 * time.Millisecond)
 	if got := len(executor.recorded()); got != fires {
 		t.Fatalf("completed task fired %d more times", got-fires)
+	}
+}
+
+// gatedRecorder holds each run at the executor seam before recording it,
+// widening the start-vs-land window the Completed flag must survive.
+type gatedRecorder struct {
+	gate  chan struct{}
+	mu    sync.Mutex
+	fires []Fire
+}
+
+func (g *gatedRecorder) Run(ctx context.Context, fire Fire) RunResult {
+	<-g.gate
+	g.mu.Lock()
+	g.fires = append(g.fires, fire)
+	g.mu.Unlock()
+	return RunResult{Status: RunStatusSuccess}
+}
+
+func (g *gatedRecorder) recorded() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return len(g.fires)
+}
+
+func TestSchedulerMaxRunsCompletedWhileFinalRunInFlight(t *testing.T) {
+	executor := &gatedRecorder{gate: make(chan struct{})}
+	scheduler, _ := newTestScheduler(t, NewMemoryStore(), executor, nil)
+	mustStart(t, scheduler)
+	defer stopScheduler(t, scheduler)
+	spec := everySpec("gated", 50*time.Millisecond)
+	spec.MaxRuns = 1
+	if err := scheduler.Register(spec); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	// Completed means the schedule will not fire again; it flips when
+	// the final run STARTS, before the executor is called, and Running
+	// disambiguates the in-flight final run.
+	waitFor(t, "completed with final run in flight", func() bool {
+		status, err := scheduler.Get("gated")
+		return err == nil && status.Completed && status.Running &&
+			status.NextFire == nil
+	})
+	if got := executor.recorded(); got != 0 {
+		t.Fatalf("executor ran %d times before gate release", got)
+	}
+
+	close(executor.gate)
+	waitFor(t, "final run terminal", func() bool {
+		status, err := scheduler.Get("gated")
+		return err == nil && status.Completed && !status.Running &&
+			status.LastRun != nil && status.LastRun.Status == RunStatusSuccess
+	})
+	time.Sleep(150 * time.Millisecond)
+	if got := executor.recorded(); got != 1 {
+		t.Fatalf("fired %d times after completion, want exactly 1", got)
 	}
 }
 

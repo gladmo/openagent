@@ -236,8 +236,12 @@ ai/           P3 IN PROGRESS. DONE so far:
               state reduction: message_start/update -> streamingMessage,
               message_end appends, tool start/end pending set copy, turn_end
               errorMessage, agent_end clears streaming);
-              agent/search.go (SearchQuery/SessionSearchHit/EntrySearchHit/
-              SessionSearchService).
+              agent/search.go (SearchQuery/SessionSearchHit/
+              EntrySearchHit/SessionSearchService incl. sync/notify/
+              remove/close; optional searchEntries maps to the
+              EntrySearchCapable upgrade interface). Shape initially
+              drifted from the reference (phantom provider/model/message
+              fields, missing lifecycle methods); corrected to 1:1.
               P4 TEST PORTS: agent_loop_test.go (event sequence w/ exact
               order, tool calls+results, length-truncation failure, parallel
               completion-order vs source-order persistence (channel-gated),
