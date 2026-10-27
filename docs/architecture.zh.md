@@ -39,6 +39,7 @@ examples/     可运行的示例 agent
 
 - **提供方：** 在 `ai/` 实现提供方核心，随其目录条目注册。
 - **工具：** 在 `agent/harness/tools` 定义工具，由循环调度调用；coding agent 在 `codingagent/core/tools` 包装自有工具集。
+- **人类问答：** `ask_user_question` 走 `agent/harness/interaction` 的可替换应答方链（[交互](modules/interaction.zh.md)）。
 - **扩展：** coding agent 的扩展 API 位于 `codingagent/core/extensions`（Go 原生；运行时 TypeScript 加载为已文档化偏差——见 PARITY.md）。
 - **遥测：** 经 `telemetry/` 上下文定义 span 模式；内置 NOOP 与内存实现。
 - **轨迹与压缩：** 运行记录见 `trajectory/`；检查点摘要见 `agent/harness/compaction`（[轨迹](modules/trajectory.zh.md)、[压缩](modules/compaction.zh.md)）。

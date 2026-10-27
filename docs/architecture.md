@@ -38,6 +38,7 @@ examples/     Runnable example agents
 
 - **Providers:** implement the provider core in `ai/`, register with its catalog entry.
 - **Tools:** define tools in `agent/harness/tools` or `codingagent/core/tools`; the loop's dispatch calls them.
+- **Human questions:** `ask_user_question` over the replaceable answerer chain in `agent/harness/interaction` ([interaction](modules/interaction.md)).
 - **Extensions:** `codingagent`'s extension API is Go-native; runtime TypeScript loading is a documented deviation (PARITY.md).
 - **Telemetry:** span schemas via `telemetry/` contexts; NOOP and in-memory ship.
 - **Trajectory & compaction:** run records via `trajectory/`; checkpoint summaries via `agent/harness/compaction` ([trajectory](modules/trajectory.md), [compaction](modules/compaction.md)).
