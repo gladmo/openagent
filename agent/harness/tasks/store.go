@@ -29,8 +29,15 @@ type StoreIssue struct {
 	Err  error
 }
 
-// Store persists the full task set. Save replaces the previous content
-// atomically; Load returns the records and any per-record degradations.
+// Store persists the full task set. The scheduler serializes every Load
+// and Save from one goroutine, so adapters need no locking of their
+// own. Save receives the whole snapshot and must replace the previous
+// content atomically — a transactional upsert-by-task-id plus
+// delete-of-the-absent satisfies it for relational adapters. Load order
+// is irrelevant (the scheduler sorts); a corrupt or invalid record
+// degrades to a StoreIssue instead of failing startup. Schema and
+// migrations belong to the owning process: FileStore owns its JSONL
+// file, and a host-backed adapter owns its tables.
 type Store interface {
 	Load() ([]TaskRecord, []StoreIssue)
 	Save(records []TaskRecord) error

@@ -45,6 +45,6 @@ cron 解析器自研，语义对齐 robfig/cron v3.0.0 的 5 段子集（名称�
 - 宿主进程拥有接线权：调度器随构造它的进程启停；重启把遗留 `running` 运行标记 `interrupted`，且从不补跑。
 - 单进程假设：无 leader 选举或跨实例锁；每进程一个 store 文件。
 - cron 粒度为分钟；秒级工作使用 `every`（受 `MinEvery` 下限约束，默认 10s）。
-- `Executor` 已有两个真实适配器（测试 fake、`AgentExecutor`）；harness lane 驱动适配器日后可加入该缝而不改调度器。
+- `Executor` 已有三个真实适配器（测试 fake、`AgentExecutor`、以及 [2026-10-27-tasks-pipeline-executor](2026-10-27-tasks-pipeline-executor.zh.md) 决策的宿主管线适配器）；harness lane 驱动适配器日后可加入该缝而不改调度器。
 - `TaskRun.RunID`（UUIDv7 字符串、无 kind）的形态可直接注册进未来的通用后台任务注册表。
 - 自然语言入口（`task_manage`）是普通 `agent.AgentTool`，任何循环级消费方都能获得；codingagent 经其既有工具定义适配器包装它。

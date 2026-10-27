@@ -43,6 +43,12 @@ type Executor interface {
 	Run(ctx context.Context, fire Fire) RunResult
 }
 
+// ExecutorFunc adapts one function into an Executor.
+type ExecutorFunc func(ctx context.Context, fire Fire) RunResult
+
+// Run delegates to the function.
+func (f ExecutorFunc) Run(ctx context.Context, fire Fire) RunResult { return f(ctx, fire) }
+
 // BusyPolicy values for fixed sessions whose agent is mid-run.
 const (
 	// BusyWait waits for the session to go idle (bounded by the run

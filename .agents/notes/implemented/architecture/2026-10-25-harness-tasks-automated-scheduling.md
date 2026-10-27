@@ -45,6 +45,6 @@ A corrupted document would lose every task; per-line decode degrades to the dama
 - Host processes own wiring: the scheduler starts and stops with the process that constructed it; restart marks orphaned `running` runs `interrupted` and never backfills.
 - Single-process assumption: no leader election or cross-instance locking; one store file per process.
 - Minute cron granularity; second-level work uses `every` (floored at `MinEvery`, default 10s).
-- `Executor` has two real adapters (test fake, `AgentExecutor`); a harness-lane drive adapter can join the seam later without scheduler changes.
+- `Executor` has three real adapters (test fake, `AgentExecutor`, and the host-pipeline adapter decided in [2026-10-27-tasks-pipeline-executor](2026-10-27-tasks-pipeline-executor.md)); a harness-lane drive adapter can join the seam later without scheduler changes.
 - `TaskRun.RunID` (UUIDv7 string, kind-less) is shaped to register in a future general background-task registry.
 - The natural-language surface (`task_manage`) is an ordinary `agent.AgentTool`, so any loop-level consumer gets it; codingagent wraps it through its existing tool-definition adapter.
